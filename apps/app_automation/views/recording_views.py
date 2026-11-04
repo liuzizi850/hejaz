@@ -2,11 +2,11 @@
 from django.conf import settings
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from ..models import AppDevice, AppRecordingSession, AppTestCase
-from ..recording.adb_gateway import parse_ui_dump
+from ..recording.adb_gateway import apply_reverse, parse_ui_dump, service_enabled
 from ..recording.ingest import parse_ingested_event
 
 
@@ -19,14 +19,17 @@ class AppRecordingSessionViewSet(viewsets.ViewSet):
             device = AppDevice.objects.get(device_id=device_id)
         except AppDevice.DoesNotExist:
             return Response({"message": "设备不存在"}, status=status.HTTP_404_NOT_FOUND)
-        if device.status == "locked" and device.locked_by_id != request.user.id:
-            return Response({"message": "设备已被其他用户锁定"}, status=status.HTTP_400_BAD_REQUEST)
+        if device.status == "locked":
+            return Response({"message": "设备已被锁定"}, status=status.HTTP_400_BAD_REQUEST)
         if not getattr(settings, "APP_RECORDER_SERVICE_ENABLED", False):
             return Response({"message": "请在系统设置中打开 TestHub 录制服务"}, status=status.HTTP_400_BAD_REQUEST)
+        if not service_enabled(device.device_id):
+            return Response({"message": "请在系统设置中打开 TestHub 录制服务"}, status=status.HTTP_400_BAD_REQUEST)
+        if not apply_reverse(device.device_id):
+            return Response({"message": "adb reverse 失败"}, status=status.HTTP_400_BAD_REQUEST)
         from ..recording.adb_gateway import capture_start_screen
         start_path = capture_start_screen(device.device_id)
-        if device.status != "locked":
-            device.lock(request.user)
+        device.lock(request.user)
         session = AppRecordingSession.objects.create(
             device=device, user=request.user, status="recording", start_screen=start_path
         )
@@ -52,12 +55,20 @@ class AppRecordingSessionViewSet(viewsets.ViewSet):
             return Response({"message": "抓不到当前界面"}, status=status.HTTP_400_BAD_REQUEST)
         return Response(parse_ui_dump(xml, width, height))
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], permission_classes=[AllowAny], authentication_classes=[])
     def events(self, request, pk=None):
-        session = AppRecordingSession.objects.get(pk=pk, user=request.user)
+        try:
+            session = AppRecordingSession.objects.get(pk=pk)
+        except AppRecordingSession.DoesNotExist:
+            return Response({"message": "会话不存在"}, status=status.HTTP_404_NOT_FOUND)
         if session.status != "recording":
             return Response({"message": "会话不在录制中"}, status=status.HTTP_400_BAD_REQUEST)
-        step = parse_ingested_event(request.data, order=len(session.steps) + 1, template=request.data.get("template") or "")
+        try:
+            step = parse_ingested_event(
+                request.data, order=len(session.steps) + 1, template=request.data.get("template") or ""
+            )
+        except ValueError:
+            return Response({"message": "未知事件类型"}, status=status.HTTP_400_BAD_REQUEST)
         session.steps = list(session.steps) + [step]
         if step.get("screen"):
             session.screen = step["screen"]

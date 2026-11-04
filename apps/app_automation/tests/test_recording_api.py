@@ -1,8 +1,9 @@
+from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 from apps.app_automation.models import AppDevice, AppRecordingSession, AppTestCase
-from apps.app_automation.recording.adb_gateway import accessibility_enabled
+from apps.app_automation.recording.adb_gateway import accessibility_enabled, reverse_argument, service_enabled
 
 class RecordingApiTests(TestCase):
     def setUp(self):
@@ -15,8 +16,34 @@ class RecordingApiTests(TestCase):
         assert accessibility_enabled("com.testhub.recorder/com.testhub.recorder.RecorderService") is True
         assert accessibility_enabled("com.other/com.other.Service") is False
 
+    def test_service_enabled_uses_command_output_without_adb(self):
+        with patch("subprocess.run") as run:
+            assert service_enabled(
+                "emulator-5554",
+                command_output="com.testhub.recorder/com.testhub.recorder.RecorderService",
+            ) is True
+            assert service_enabled("emulator-5554", command_output="com.other/com.other.Service") is False
+            run.assert_not_called()
+
+    def test_reverse_argument_is_fixed_ports(self):
+        assert reverse_argument(8000) == ["reverse", "tcp:27183", "tcp:8000"]
+
     def test_start_rejected_when_service_disabled(self):
-        response = self.client.post("/api/app-automation/recording-sessions/", {"device_id": "emulator-5554"}, format="json")
+        with patch("subprocess.run") as run:
+            response = self.client.post("/api/app-automation/recording-sessions/", {"device_id": "emulator-5554"}, format="json")
+            run.assert_not_called()
+        assert response.status_code == 400
+        assert AppRecordingSession.objects.count() == 0
+
+    def test_start_rejected_when_device_locked_by_current_user(self):
+        self.device.lock(self.user)
+        with patch("subprocess.run") as run:
+            response = self.client.post(
+                "/api/app-automation/recording-sessions/",
+                {"device_id": "emulator-5554"},
+                format="json",
+            )
+            run.assert_not_called()
         assert response.status_code == 400
         assert AppRecordingSession.objects.count() == 0
 
@@ -58,3 +85,42 @@ class RecordingApiTests(TestCase):
         assert case.event_chain["steps"][0]["resource_id"] == "com.app:id/login"
         assert case.start_screen == "start.png"
         assert case.ui_flow == {}
+
+    def test_events_accepts_unauthenticated_click(self):
+        session = AppRecordingSession.objects.create(
+            device=self.device, user=self.user, status="recording"
+        )
+        guest = APIClient()
+        response = guest.post(
+            f"/api/app-automation/recording-sessions/{session.id}/events/",
+            {
+                "event_type": "click",
+                "resource_id": "com.app:id/login",
+                "content_desc": "",
+                "text": "登录",
+                "class_name": "Button",
+                "bounds": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1},
+                "screen": {"width": 1080, "height": 2400},
+                "duration_ms": 80,
+            },
+            format="json",
+        )
+        assert response.status_code == 201
+        session.refresh_from_db()
+        assert len(session.steps) == 1
+        assert session.steps[0]["type"] == "click"
+        assert session.steps[0]["resource_id"] == "com.app:id/login"
+
+    def test_unknown_event_returns_400(self):
+        session = AppRecordingSession.objects.create(
+            device=self.device, user=self.user, status="recording"
+        )
+        guest = APIClient()
+        response = guest.post(
+            f"/api/app-automation/recording-sessions/{session.id}/events/",
+            {"event_type": "rotate"},
+            format="json",
+        )
+        assert response.status_code == 400
+        session.refresh_from_db()
+        assert session.steps == []

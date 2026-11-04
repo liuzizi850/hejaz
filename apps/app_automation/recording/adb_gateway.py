@@ -11,6 +11,38 @@ def reverse_argument(django_port=8000):
     return ["reverse", "tcp:%s" % RECORDER_PORT, "tcp:%s" % int(django_port)]
 
 
+def service_enabled(device_id, command_output=None):
+    if isinstance(command_output, str):
+        return accessibility_enabled(command_output)
+    import subprocess
+    try:
+        result = subprocess.run(
+            [
+                "adb", "-s", device_id, "shell",
+                "settings", "get", "secure", "enabled_accessibility_services",
+            ],
+            capture_output=True,
+            timeout=5,
+        )
+        output = result.stdout.decode("utf-8", errors="ignore") if result.stdout else ""
+        return accessibility_enabled(output)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def apply_reverse(device_id):
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["adb", "-s", device_id] + reverse_argument(8000),
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def parse_ui_dump(xml_text, screen_width, screen_height):
     import re
     texts = []
