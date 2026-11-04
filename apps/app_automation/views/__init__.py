@@ -19,6 +19,7 @@ from .execution_views import AppTestExecutionViewSet
 from .suite_views import AppTestSuiteViewSet
 from .scheduled_task_views import AppScheduledTaskViewSet, AppNotificationLogViewSet
 from .dashboard_views import AppDashboardViewSet
+from .recording_views import AppRecordingSessionViewSet
 
 __all__ = [
     # 项目管理
@@ -54,4 +55,7 @@ __all__ = [
     
     # 仪表盘
     'AppDashboardViewSet',
+
+    # 录制会话
+    'AppRecordingSessionViewSet',
 ]
