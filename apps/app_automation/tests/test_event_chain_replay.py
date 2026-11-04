@@ -2,11 +2,12 @@ import pytest
 from apps.app_automation.recording.replay import replay_event_chain, ScreenRecordError
 
 class FakeDevice:
-    def __init__(self, match=True, nodes=None, template=False, record_ok=True):
+    def __init__(self, match=True, nodes=None, template=False, record_ok=True, stop_ok=True):
         self.match = match
         self.nodes = nodes or []
         self.template = template
         self.record_ok = record_ok
+        self.stop_ok = stop_ok
         self.calls = []
 
     def screenshot(self, name):
@@ -51,6 +52,8 @@ class FakeDevice:
         self.calls.append(("start_record",))
 
     def stop_screenrecord(self):
+        if not self.stop_ok:
+            raise ScreenRecordError("录屏失败")
         self.calls.append(("stop_record",))
         return ["video-1.mp4"]
 
@@ -111,3 +114,40 @@ def test_assert_text_and_screenrecord_error_still_runs_steps():
     assert result["screenrecord_error"] == "录屏失败"
     assert result["videos"] == []
     assert result["steps"][0]["status"] == "passed"
+
+
+def test_two_click_steps_keep_separate_ordered_screenshots():
+    device = FakeDevice(nodes=[
+        {"resource_id": "ok", "bounds": {"x": 0, "y": 0, "w": 0.1, "h": 0.1}},
+        {"resource_id": "next", "bounds": {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}},
+    ])
+    result = replay_event_chain(
+        [
+            {"type": "click", "order": 1, "name": "点确定", "resource_id": "ok"},
+            {"type": "click", "order": 2, "name": "点下一步", "resource_id": "next"},
+        ],
+        "start.png",
+        device,
+    )
+    first, second = result["steps"][0]["screenshot"], result["steps"][1]["screenshot"]
+    assert first != second
+    assert "1" in first
+    assert "2" in second
+
+
+def test_stop_screenrecord_error_keeps_steps_and_drops_videos():
+    device = FakeDevice(
+        nodes=[{"resource_id": "ok", "bounds": {"x": 0, "y": 0, "w": 0.1, "h": 0.1}}],
+        stop_ok=False,
+    )
+    result = replay_event_chain(
+        [
+            {"type": "click", "order": 1, "name": "点确定", "resource_id": "ok"},
+            {"type": "click", "order": 2, "name": "点缺失", "resource_id": "missing"},
+        ],
+        "start.png",
+        device,
+    )
+    assert [item["status"] for item in result["steps"]] == ["passed", "failed"]
+    assert result["videos"] == []
+    assert result["screenrecord_error"] == "录屏失败"

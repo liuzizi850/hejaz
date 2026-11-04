@@ -29,24 +29,28 @@ def _locate(step, device):
     return None
 
 
+def _step_shot_name(step):
+    return "%s-%s" % (step.get("order"), step.get("type") or "step")
+
+
 def _run_action(step, device):
     kind = step.get("type")
     if kind == "wait":
         device.wait_ms(int(step.get("duration_ms") or 0))
-        return _outcome(step, "passed", device.screenshot("wait"), "")
+        return _outcome(step, "passed", device.screenshot(_step_shot_name(step)), "")
     if kind == "assert":
         missing = [text for text in (step.get("expected_texts") or []) if not device.text_exists(text)]
         for selector in step.get("expected_selectors") or []:
             if _locate(selector, device) is None:
                 missing.append(selector.get("resource_id") or selector.get("text") or "控件")
-        shot = device.screenshot("assert")
+        shot = device.screenshot(_step_shot_name(step))
         if missing:
             return _outcome(step, "failed", shot, "未找到: " + ", ".join(missing))
         return _outcome(step, "passed", shot, "")
     if kind == "input" and not (step.get("input_text") or ""):
-        return _outcome(step, "failed", device.screenshot("input"), "输入文字为空")
+        return _outcome(step, "failed", device.screenshot(_step_shot_name(step)), "输入文字为空")
     node = _locate(step, device)
-    shot = device.screenshot(kind or "step")
+    shot = device.screenshot(_step_shot_name(step))
     if node is None:
         return _outcome(step, "failed", shot, "找不到控件")
     if kind == "click":
@@ -91,7 +95,11 @@ def replay_event_chain(steps, start_screen, device):
             failed = True
     videos = []
     if not screenrecord_error:
-        videos = device.stop_screenrecord()
+        try:
+            videos = device.stop_screenrecord()
+        except ScreenRecordError as exc:
+            screenrecord_error = str(exc)
+            videos = []
     return {
         "passed": not failed,
         "start_screen_mismatch": False,

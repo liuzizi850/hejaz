@@ -267,5 +267,9 @@ class AdbEventDevice:
 
     def stop_screenrecord(self):
         self._stop = True
-        self._thread.join(timeout=15)
+        thread = getattr(self, "_thread", None)
+        if thread is not None:
+            thread.join(timeout=15)
+        if self._record_error:
+            raise ScreenRecordError("录屏失败")
         return list(self._videos)
