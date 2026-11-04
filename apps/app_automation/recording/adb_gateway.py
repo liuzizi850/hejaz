@@ -75,13 +75,18 @@ def parse_ui_dump(xml_text, screen_width, screen_height):
     return {"texts": texts, "selectors": selectors}
 
 
+def safe_device_filename(device_id):
+    import re
+    return re.sub(r"[^a-zA-Z0-9._-]", "_", device_id or "")
+
+
 def capture_start_screen(device_id):
     import os
     import subprocess
     from django.conf import settings
     directory = os.path.join(settings.MEDIA_ROOT, "app-automation", "recordings", "starts")
     os.makedirs(directory, exist_ok=True)
-    path = os.path.join(directory, "%s.png" % device_id)
+    path = os.path.join(directory, "%s.png" % safe_device_filename(device_id))
     data = subprocess.check_output(["adb", "-s", device_id, "exec-out", "screencap", "-p"])
     with open(path, "wb") as handle:
         handle.write(data)
