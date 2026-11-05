@@ -548,6 +548,11 @@ const routes = [
                 component: () => import('@/views/app-automation/test-cases/TestCaseList.vue')
             },
             {
+                path: 'recording',
+                name: 'AppRecordingSession',
+                component: () => import('@/views/app-automation/recording/RecordSession.vue')
+            },
+            {
                 path: 'test-suites',
                 name: 'AppTestSuiteList',
                 component: () => import('@/views/app-automation/suites/SuiteList.vue')

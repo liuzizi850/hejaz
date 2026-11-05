@@ -94,7 +94,7 @@
             {{ row.finished_at ? formatDateTime(row.finished_at) : '-' }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('appAutomation.common.operation')" width="180" fixed="right">
+        <el-table-column :label="$t('appAutomation.common.operation')" width="240" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'running'"
@@ -123,6 +123,14 @@
             >
               {{ $t('appAutomation.execution.viewError') }}
             </el-button>
+            <el-link
+              v-if="row.result_bundle_path"
+              type="primary"
+              :href="bundleMediaUrl(row.result_bundle_path)"
+              target="_blank"
+            >
+              下载
+            </el-link>
           </template>
         </el-table-column>
       </el-table>
@@ -247,6 +255,17 @@ const viewReport = (execution) => {
 const viewError = (execution) => {
   currentError.value = execution.error_message
   errorDialogVisible.value = true
+}
+
+const bundleMediaUrl = (filePath) => {
+  if (!filePath) return ''
+  const normalized = String(filePath).replace(/\\/g, '/')
+  const marker = '/media/'
+  const index = normalized.toLowerCase().lastIndexOf(marker)
+  if (index >= 0) return normalized.slice(index)
+  const trimmed = normalized.replace(/^\/+/, '')
+  if (trimmed.toLowerCase().startsWith('media/')) return `/${trimmed}`
+  return `/media/${trimmed}`
 }
 
 // getDisplayStatus 已从 helpers 导入

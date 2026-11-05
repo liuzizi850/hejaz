@@ -74,6 +74,13 @@ export function getDeviceList(params) {
 }
 
 /**
+ * 录制页使用的设备列表。与 getDeviceList 同一接口。
+ */
+export function getAppDevices(params) {
+  return getDeviceList(params)
+}
+
+/**
  * 获取设备截图
  */
 export function captureDeviceScreenshot(id) {
@@ -696,4 +703,59 @@ export function getAppNotificationLogs(params) {
  */
 export function retryAppNotification(id) {
   return request({ url: `/app-automation/notification-logs/${id}/retry/`, method: 'post' })
+}
+
+// ========== 事件链录制 ==========
+
+export function createRecordingSession(data) {
+  return request({
+    url: '/app-automation/recording-sessions/',
+    method: 'post',
+    data
+  })
+}
+
+export function postRecordingEvent(id, data) {
+  return request({
+    url: `/app-automation/recording-sessions/${id}/events/`,
+    method: 'post',
+    data
+  })
+}
+
+export function postRecordingAssertion(id, data) {
+  return request({
+    url: `/app-automation/recording-sessions/${id}/assertions/`,
+    method: 'post',
+    data
+  })
+}
+
+export function stopRecordingSession(id) {
+  return request({
+    url: `/app-automation/recording-sessions/${id}/stop/`,
+    method: 'post'
+  })
+}
+
+export function saveRecordingSession(id, data) {
+  return request({
+    url: `/app-automation/recording-sessions/${id}/save/`,
+    method: 'post',
+    data
+  })
+}
+
+export function getRecordingScreenTree(id) {
+  return request({
+    url: `/app-automation/recording-sessions/${id}/screen-tree/`,
+    method: 'get'
+  })
+}
+
+export function interruptRecordingSession(id) {
+  return request({
+    url: `/app-automation/recording-sessions/${id}/interrupt/`,
+    method: 'post'
+  })
 }

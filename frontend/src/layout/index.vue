@@ -192,6 +192,10 @@
               <el-icon><Document /></el-icon>
               <span>{{ $t('menu.testCases') }}</span>
             </el-menu-item>
+            <el-menu-item index="/app-automation/recording">
+              <el-icon><VideoCamera /></el-icon>
+              <span>录制用例</span>
+            </el-menu-item>
             <el-menu-item index="/app-automation/test-suites">
               <el-icon><FolderOpened /></el-icon>
               <span>{{ $t('menu.suiteManagement') }}</span>
@@ -444,7 +448,7 @@ import {
   Monitor, Folder, Document, Flag, Check, Collection, VideoPlay,
   DataAnalysis, ChatDotRound, DocumentCopy, Link, MagicStick,
   Odometer, Timer, Setting, AlarmClock, Bell, Aim, Edit, Cpu, ArrowDown, Cellphone, Connection, FolderOpened, Tickets, Plus,
-  SetUp, TrendCharts
+  SetUp, TrendCharts, VideoCamera
 } from '@element-plus/icons-vue'
 import logoSvg from '@/assets/images/logo.svg'
 import logoHomePng from '@/assets/images/logo_home.png'
@@ -557,6 +561,7 @@ const breadcrumbTitle = computed(() => {
     '/app-automation/elements': t('menu.elementManagement'),
     '/app-automation/scene-builder': t('menu.caseDesign'),
     '/app-automation/test-cases': t('menu.testCases'),
+    '/app-automation/recording': '录制用例',
     '/app-automation/test-suites': t('menu.suiteManagement'),
     '/app-automation/scheduled-tasks': t('menu.scheduledTasks'),
     '/app-automation/notification-logs': t('menu.notificationList'),
