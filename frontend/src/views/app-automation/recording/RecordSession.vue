@@ -166,6 +166,7 @@ const sessionId = ref(null)
 const sessionStatus = ref('')
 const steps = ref([])
 const caseName = ref('')
+const savedCaseId = ref(null)
 const passwordHint = ref('')
 
 const starting = ref(false)
@@ -357,10 +358,17 @@ const stepsForSave = () => {
 const saveCase = async () => {
   saving.value = true
   try {
-    const res = await saveRecordingSession(sessionId.value, {
+    const payload = {
       name: caseName.value,
       steps: stepsForSave()
-    })
+    }
+    if (savedCaseId.value != null) {
+      payload.case_id = savedCaseId.value
+    }
+    const res = await saveRecordingSession(sessionId.value, payload)
+    if (res.data?.id != null) {
+      savedCaseId.value = res.data.id
+    }
     const empty = res.data?.empty_password_steps || []
     if (empty.length) {
       const emptySet = new Set(empty)

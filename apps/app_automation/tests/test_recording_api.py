@@ -64,6 +64,47 @@ class RecordingApiTests(TestCase):
         assert session.status == "interrupted"
         assert session.steps[0]["type"] == "click"
 
+    def test_save_update_with_case_id_fills_password_without_second_case(self):
+        password_step = {
+            "type": "input",
+            "platform": "android",
+            "order": 1,
+            "name": "输入密码",
+            "password": True,
+            "input_text": "",
+            "resource_id": "com.app:id/pwd",
+            "template": "",
+        }
+        session = AppRecordingSession.objects.create(
+            device=self.device,
+            user=self.user,
+            status="stopped",
+            start_screen="start.png",
+            steps=[password_step],
+        )
+        first = self.client.post(
+            f"/api/app-automation/recording-sessions/{session.id}/save/",
+            {"name": "密码用例", "steps": session.steps},
+            format="json",
+        )
+        assert first.status_code == 201
+        case_id = first.data["id"]
+        assert first.data["empty_password_steps"] == [1]
+        assert AppTestCase.objects.count() == 1
+
+        filled = [{**password_step, "input_text": "secret123"}]
+        second = self.client.post(
+            f"/api/app-automation/recording-sessions/{session.id}/save/",
+            {"name": "密码用例", "steps": filled, "case_id": case_id},
+            format="json",
+        )
+        assert second.status_code == 200
+        assert second.data["id"] == case_id
+        assert second.data["empty_password_steps"] == []
+        assert AppTestCase.objects.count() == 1
+        case = AppTestCase.objects.get(pk=case_id)
+        assert case.event_chain["steps"][0]["input_text"] == "secret123"
+
     def test_save_creates_case_without_touching_ui_flow(self):
         session = AppRecordingSession.objects.create(
             device=self.device,

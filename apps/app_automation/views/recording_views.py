@@ -110,12 +110,30 @@ class AppRecordingSessionViewSet(viewsets.ViewSet):
     def save(self, request, pk=None):
         session = AppRecordingSession.objects.get(pk=pk, user=request.user)
         steps = request.data.get("steps", session.steps)
-        case = AppTestCase.objects.create(
-            name=request.data.get("name") or "未命名录制",
-            event_chain={"platform": "android", "screen": session.screen, "steps": steps},
-            start_screen=session.start_screen,
-            ui_flow={},
-            created_by=request.user,
-        )
+        name = request.data.get("name") or "未命名录制"
+        event_chain = {"platform": "android", "screen": session.screen, "steps": steps}
+        case_id = request.data.get("case_id")
+        if case_id is not None:
+            try:
+                case = AppTestCase.objects.get(pk=case_id, created_by=request.user)
+            except AppTestCase.DoesNotExist:
+                return Response({"message": "用例不存在"}, status=status.HTTP_404_NOT_FOUND)
+            case.name = name
+            case.event_chain = event_chain
+            case.start_screen = session.start_screen
+            case.save(update_fields=["name", "event_chain", "start_screen"])
+            response_status = status.HTTP_200_OK
+        else:
+            case = AppTestCase.objects.create(
+                name=name,
+                event_chain=event_chain,
+                start_screen=session.start_screen,
+                ui_flow={},
+                created_by=request.user,
+            )
+            response_status = status.HTTP_201_CREATED
         empty_inputs = [step for step in steps if step.get("type") == "input" and step.get("password") and not step.get("input_text")]
-        return Response({"id": case.id, "empty_password_steps": [step.get("order") for step in empty_inputs]}, status=status.HTTP_201_CREATED)
+        return Response(
+            {"id": case.id, "empty_password_steps": [step.get("order") for step in empty_inputs]},
+            status=response_status,
+        )
