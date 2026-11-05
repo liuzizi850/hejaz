@@ -614,6 +614,12 @@ class AppTestExecution(models.Model):
     report_path = models.CharField(max_length=500, blank=True, default='', verbose_name='Allure报告路径')
     result_bundle_path = models.CharField(max_length=500, blank=True, default='', verbose_name='事件链结果包路径')
     error_message = models.TextField(blank=True, default='', verbose_name='错误信息')
+    mismatch_current_url = models.CharField(
+        max_length=500, null=True, blank=True, default='', verbose_name='不匹配当前界面'
+    )
+    mismatch_expected_url = models.CharField(
+        max_length=500, null=True, blank=True, default='', verbose_name='不匹配开始界面'
+    )
     
     # 执行结果统计
     total_steps = models.IntegerField(default=0, verbose_name='总步骤数')

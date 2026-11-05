@@ -115,7 +115,7 @@
               {{ $t('appAutomation.execution.viewReport') }}
             </el-button>
             <el-button
-              v-if="row.error_message"
+              v-if="row.error_message || row.mismatch_current_url || row.mismatch_expected_url"
               type="danger"
               size="small"
               text
@@ -156,7 +156,17 @@
       width="600px"
     >
       <div class="error-content">
-        <pre>{{ currentError }}</pre>
+        <div v-if="mismatchCurrentUrl || mismatchExpectedUrl" class="mismatch-shots">
+          <div v-if="mismatchCurrentUrl">
+            <p>当前界面</p>
+            <img :src="mismatchCurrentUrl" alt="当前界面" />
+          </div>
+          <div v-if="mismatchExpectedUrl">
+            <p>开始界面</p>
+            <img :src="mismatchExpectedUrl" alt="开始界面" />
+          </div>
+        </div>
+        <pre v-if="currentError">{{ currentError }}</pre>
       </div>
       <template #footer>
         <el-button type="primary" @click="errorDialogVisible = false">
@@ -193,6 +203,8 @@ const total = ref(0)
 
 const errorDialogVisible = ref(false)
 const currentError = ref('')
+const mismatchCurrentUrl = ref('')
+const mismatchExpectedUrl = ref('')
 
 let refreshTimer = null
 
@@ -253,7 +265,9 @@ const viewReport = (execution) => {
 }
 
 const viewError = (execution) => {
-  currentError.value = execution.error_message
+  currentError.value = execution.error_message || ''
+  mismatchCurrentUrl.value = execution.mismatch_current_url || ''
+  mismatchExpectedUrl.value = execution.mismatch_expected_url || ''
   errorDialogVisible.value = true
 }
 
@@ -342,6 +356,23 @@ onUnmounted(() => {
 .error-content {
   max-height: 400px;
   overflow-y: auto;
+
+  .mismatch-shots {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+
+    p {
+      margin: 0 0 8px;
+    }
+
+    img {
+      max-width: 100%;
+      max-height: 220px;
+      object-fit: contain;
+      background: #f5f7fa;
+    }
+  }
   
   pre {
     background: #f5f7fa;

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -10,7 +11,7 @@ import numpy as np
 from airtest.core.cv import Template
 from django.conf import settings
 
-from apps.app_automation.recording.adb_gateway import parse_ui_dump, read_ui_dump
+from apps.app_automation.recording.adb_gateway import parse_ui_dump, read_ui_dump, to_media_url
 from apps.app_automation.recording.replay import ScreenRecordError, replay_event_chain
 from apps.app_automation.recording.report_pack import build_result_zip, write_report_docx
 
@@ -25,6 +26,42 @@ def video_names(elapsed_seconds, limit=180):
     return ["video-%s.mp4" % index for index in range(1, segment_count(elapsed_seconds, limit) + 1)]
 
 
+def clear_field_commands(device_id):
+    prefix = ["adb", "-s", device_id, "shell", "input"]
+    return [
+        prefix + ["keyevent", "KEYCODE_MOVE_END"],
+        prefix + ["keycombination", "113", "29"],
+        prefix + ["keyevent", "KEYCODE_DEL"],
+    ]
+
+
+def input_text_command(device_id, text):
+    value = "" if text is None else str(text)
+    return ["adb", "-s", device_id, "shell", "input", "text", value]
+
+
+def airtest_text_writer():
+    try:
+        from airtest.core.api import text as airtest_text
+    except ImportError:
+        return None
+    return airtest_text
+
+
+def write_with_airtest(device_id, value):
+    from airtest.core import api as airtest_api
+    serial = None
+    try:
+        current = airtest_api.G.DEVICE
+    except Exception:
+        current = None
+    if current is not None:
+        serial = getattr(getattr(current, "adb", None), "serialno", None)
+    if serial != device_id:
+        airtest_api.connect_device("Android:///%s" % device_id)
+    airtest_api.text(value, enter=False)
+
+
 class EventChainRunner:
     def run(self, execution_id, device=None):
         from apps.app_automation.models import AppTestExecution
@@ -35,11 +72,7 @@ class EventChainRunner:
         chain = case.event_chain if isinstance(case.event_chain, dict) else {}
         result = replay_event_chain(chain.get("steps") or [], case.start_screen, device)
         if result["start_screen_mismatch"]:
-            execution.error_message = "开始界面不匹配\n当前屏: %s\n开始界面: %s" % (
-                result["current_screen"], result["start_screen"]
-            )
-            execution.result_bundle_path = ""
-            execution.save(update_fields=["error_message", "result_bundle_path", "updated_at"])
+            self._publish_mismatch(execution, result.get("current_screen"), result.get("start_screen"))
             return result
         bundle_dir = os.path.join(settings.MEDIA_ROOT, "app-automation", "results", str(execution_id))
         os.makedirs(bundle_dir, exist_ok=True)
@@ -63,6 +96,27 @@ class EventChainRunner:
         execution.result_bundle_path = result["result_bundle_path"]
         execution.save(update_fields=["result_bundle_path", "updated_at"])
         return result
+
+    def _publish_mismatch(self, execution, current_path, expected_path):
+        directory = os.path.join(settings.MEDIA_ROOT, "app-automation", "results", str(execution.id))
+        os.makedirs(directory, exist_ok=True)
+
+        def place(source, name):
+            if not source or not os.path.isfile(source):
+                return ""
+            dest = os.path.join(directory, name)
+            if os.path.abspath(source) != os.path.abspath(dest):
+                shutil.copyfile(source, dest)
+            return to_media_url(dest)
+
+        execution.mismatch_current_url = place(current_path, "mismatch-current.png")
+        execution.mismatch_expected_url = place(expected_path, "mismatch-expected.png")
+        execution.error_message = "开始界面不匹配"
+        execution.result_bundle_path = ""
+        execution.save(update_fields=[
+            "mismatch_current_url", "mismatch_expected_url",
+            "error_message", "result_bundle_path", "updated_at",
+        ])
 
 
 class AdbEventDevice:
@@ -208,8 +262,12 @@ class AdbEventDevice:
 
     def input_text(self, node, text):
         self.click(node)
-        encoded = (text or "").replace(" ", "%s")
-        self._input("text", encoded)
+        for command in clear_field_commands(self.device_id):
+            subprocess.check_call(command)
+        if airtest_text_writer() is None:
+            subprocess.check_call(input_text_command(self.device_id, text))
+            return
+        write_with_airtest(self.device_id, text)
 
     def wait_ms(self, duration_ms):
         time.sleep(max(int(duration_ms or 0), 0) / 1000.0)
