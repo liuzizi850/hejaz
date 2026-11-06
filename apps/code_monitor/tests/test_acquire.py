@@ -19,27 +19,37 @@ def test_timeout_constant():
 
 
 def test_token_is_not_part_of_the_git_command(tmp_path: Path, monkeypatch):
-    seen = {}
+    calls = []
 
     def fake_run(cmd, **kwargs):
-        seen["cmd"] = cmd
-        seen["env"] = kwargs.get("env") or {}
+        calls.append({"cmd": list(cmd), "env": kwargs.get("env") or {}})
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr("apps.code_monitor.acquire.subprocess.run", fake_run)
-    clone_repository("https://example.com/repo.git", tmp_path / "repo", token="super-secret-token")
-    assert seen["cmd"][:5] == ["git", "clone", "--depth", "1", "--"]
-    assert seen["cmd"][5] == "https://super-secret-token@example.com/repo.git"
-    assert seen["cmd"][6] == str(tmp_path / "repo")
-    assert all(part != "super-secret-token" for part in seen["cmd"])
-    assert "super-secret-token" not in seen["cmd"][-1]
-    env = seen["env"]
-    assert env is not os.environ
-    assert env["GIT_TERMINAL_PROMPT"] == "0"
-    for key, value in env.items():
-        if key == "GIT_TERMINAL_PROMPT":
-            continue
-        assert os.environ.get(key) == value
+    dest = tmp_path / "repo"
+    plain_url = "https://example.com/repo.git"
+    clone_repository(plain_url, dest, token="super-secret-token")
+    assert len(calls) == 2
+    clone_cmd = calls[0]["cmd"]
+    assert clone_cmd[:7] == ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--"]
+    assert clone_cmd[7] == "https://super-secret-token@example.com/repo.git"
+    assert clone_cmd[8] == str(dest)
+    set_url_cmd = calls[1]["cmd"]
+    assert set_url_cmd == ["git", "-C", str(dest), "remote", "set-url", "origin", plain_url]
+    assert "super-secret-token" not in set_url_cmd[-1]
+    for call in calls:
+        assert all(part != "super-secret-token" for part in call["cmd"])
+        for part in call["cmd"]:
+            if part == clone_cmd[7]:
+                continue
+            assert "super-secret-token" not in part
+        env = call["env"]
+        assert env is not os.environ
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        for key, value in env.items():
+            if key == "GIT_TERMINAL_PROMPT":
+                continue
+            assert os.environ.get(key) == value
 
 
 def test_clone_timeout_becomes_acquire_error(tmp_path: Path, monkeypatch):
@@ -81,8 +91,12 @@ def test_clone_rejects_unsafe_git_url(url, tmp_path: Path, monkeypatch):
 
 
 def test_clone_error_redacts_token_in_url(tmp_path: Path, monkeypatch):
+    calls = []
+
     def fake_run(cmd, **kwargs):
-        raise subprocess.CalledProcessError(128, cmd, stderr=f"fatal: unable to access '{cmd[5]}'")
+        calls.append(list(cmd))
+        clone_url = cmd[cmd.index("--") + 1]
+        raise subprocess.CalledProcessError(128, cmd, stderr=f"fatal: unable to access '{clone_url}'")
 
     monkeypatch.setattr("apps.code_monitor.acquire.subprocess.run", fake_run)
     with pytest.raises(AcquireError) as caught:
@@ -90,6 +104,8 @@ def test_clone_error_redacts_token_in_url(tmp_path: Path, monkeypatch):
     message = str(caught.value)
     assert "super-secret-token" not in message
     assert "***" in message
+    assert len(calls) == 1
+    assert "set-url" not in calls[0]
 
 
 def test_unzip_rejects_path_escape(tmp_path: Path):

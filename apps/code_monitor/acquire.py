@@ -57,23 +57,31 @@ def _clone_url(url: str, token: str) -> str:
 def clone_repository(url: str, dest: Path, token: str = "", timeout: int = FETCH_TIMEOUT_SECONDS) -> None:
     url = ensure_http_git_url(url)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["git", "clone", "--depth", "1", "--", _clone_url(url, token), str(dest)]
+    commands = [[
+        "git", "-c", "credential.helper=",
+        "clone", "--depth", "1", "--",
+        _clone_url(url, token),
+        str(dest),
+    ]]
+    if token:
+        commands.append(["git", "-C", str(dest), "remote", "set-url", "origin", url])
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
-    try:
-        subprocess.run(
-            cmd,
-            env=env,
-            timeout=timeout,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise AcquireError("克隆或解压超时") from exc
-    except subprocess.CalledProcessError as exc:
-        detail = redact((exc.stderr or exc.stdout or "").strip(), token)
-        raise AcquireError(f"取代码失败: {detail or 'git clone 失败'}") from exc
+    for cmd in commands:
+        try:
+            subprocess.run(
+                cmd,
+                env=env,
+                timeout=timeout,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AcquireError("克隆或解压超时") from exc
+        except subprocess.CalledProcessError as exc:
+            detail = redact((exc.stderr or exc.stdout or "").strip(), token)
+            raise AcquireError(f"取代码失败: {detail or 'git clone 失败'}") from exc
 
 
 def unzip_archive(archive_path: Path, dest: Path) -> None:
