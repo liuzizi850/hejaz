@@ -117,6 +117,15 @@ function rowsOf(response) {
   return data.results || []
 }
 
+function actionErrorMessage(error, fallback) {
+  const status = error.response?.status
+  if (status === 401 || (status != null && status >= 500)) return null
+  const data = error.response?.data
+  if (data?.non_field_errors?.[0]) return data.non_field_errors[0]
+  if (typeof data?.detail === 'string') return data.detail
+  return fallback
+}
+
 async function loadAddresses() {
   addresses.value = rowsOf(await listAddresses({ page_size: 200 }))
 }
@@ -130,16 +139,26 @@ async function loadModels() {
 }
 
 async function addAddress() {
-  await createAddress({ name: addressForm.name, git_url: addressForm.git_url })
-  addressDialog.value = false
-  addressForm.name = ''
-  addressForm.git_url = ''
-  await loadAddresses()
+  try {
+    await createAddress({ name: addressForm.name, git_url: addressForm.git_url })
+    addressDialog.value = false
+    addressForm.name = ''
+    addressForm.git_url = ''
+    await loadAddresses()
+  } catch (error) {
+    const msg = actionErrorMessage(error, '保存失败')
+    if (msg) ElMessage.error(msg)
+  }
 }
 
 async function removeAddress(id) {
-  await deleteAddress(id)
-  await loadAddresses()
+  try {
+    await deleteAddress(id)
+    await loadAddresses()
+  } catch (error) {
+    const msg = actionErrorMessage(error, '删除失败')
+    if (msg) ElMessage.error(msg)
+  }
 }
 
 function onFile(event) {
@@ -161,20 +180,30 @@ async function submitTask() {
   if (form.addressId) body.append('address_id', form.addressId)
   if (form.file) body.append('archive', form.file)
   if (form.token) body.append('token', form.token)
-  await createTask(body)
-  form.token = ''
-  await loadTasks()
-  ElMessage.success('扫描已提交')
+  try {
+    await createTask(body)
+    form.token = ''
+    await loadTasks()
+    ElMessage.success('扫描已提交')
+  } catch (error) {
+    const msg = actionErrorMessage(error, '提交失败')
+    if (msg) ElMessage.error(msg)
+  }
 }
 
 async function saveExcel(id) {
-  const response = await downloadTask(id)
-  const url = URL.createObjectURL(response.data)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `api-extract-${id}.xlsx`
-  link.click()
-  URL.revokeObjectURL(url)
+  try {
+    const response = await downloadTask(id)
+    const url = URL.createObjectURL(response.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `api-extract-${id}.xlsx`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    const msg = actionErrorMessage(error, '下载失败')
+    if (msg) ElMessage.error(msg)
+  }
 }
 
 onMounted(async () => {

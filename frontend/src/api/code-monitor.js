@@ -21,7 +21,7 @@ export function createTask(formData) {
     url: '/code-monitor/tasks/',
     method: 'post',
     data: formData,
-    headers: { 'Content-Type': 'multipart/form-data' }
+    headers: { 'Content-Type': false }
   })
 }
 
