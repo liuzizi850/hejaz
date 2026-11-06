@@ -91,6 +91,7 @@ LOCAL_APPS = [
     'apps.monitor',  # 监控中心
     'apps.perf_testing.apps.PerfTestingConfig',  # 性能测试
     'apps.mcp.apps.McpConfig',  # MCP Server（外部 Agent 驱动）
+    'apps.code_monitor.apps.CodeMonitorConfig',
 ]
 
 if ANALYTICS_ENABLED or REGISTRATION_STATS_ENABLED:
