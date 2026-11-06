@@ -371,11 +371,11 @@ if not isinstance(DYPNS_TEMPLATE_PARAM_EXTRA, dict):
         f'DYPNS_TEMPLATE_PARAM_EXTRA 需是 JSON 对象，当前为 {_DYPNS_EXTRA_RAW!r}'
     )
 
-# Cache Configuration
+# Cache Configuration (shared across web and Celery workers via Redis)
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': REDIS_URL,
         'TIMEOUT': 300,  # 默认缓存超时5分钟
     }
 }

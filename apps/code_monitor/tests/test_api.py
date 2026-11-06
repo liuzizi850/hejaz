@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -28,6 +30,14 @@ def _config(user, active=True):
         created_by=user,
         is_active=active,
     )
+
+
+def test_production_settings_use_redis_cache():
+    settings_path = Path(__file__).resolve().parents[3] / "backend" / "settings.py"
+    text = settings_path.read_text(encoding="utf-8")
+    assert "django.core.cache.backends.redis.RedisCache" in text
+    assert "REDIS_URL" in text
+    assert "django.core.cache.backends.locmem.LocMemCache" not in text
 
 
 def test_models_have_no_token_field():
