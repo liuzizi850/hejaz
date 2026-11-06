@@ -63,6 +63,18 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/code-monitor',
+        component: Layout,
+        meta: { requiresAuth: true },
+        children: [
+            {
+                path: '',
+                name: 'CodeMonitor',
+                component: () => import('@/views/code-monitor/CodeMonitor.vue')
+            }
+        ]
+    },
+    {
         path: '/login',
         name: 'Login',
         component: Login,

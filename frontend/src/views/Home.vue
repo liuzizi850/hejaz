@@ -190,6 +190,14 @@
           <h3>{{ $t('home.docsCenter') }}</h3>
           <p>{{ $t('home.docsCenterDesc') }}</p>
         </div>
+
+        <div class="nav-card" @click="handleNavigate('code-monitor')" role="button" tabindex="0">
+          <div class="card-icon code-monitor-icon">
+            <el-icon><Tickets /></el-icon>
+          </div>
+          <h3>{{ $t('home.codeMonitor') }}</h3>
+          <p>{{ $t('home.codeMonitorDesc') }}</p>
+        </div>
       </div>
     </div>
 
@@ -322,7 +330,8 @@ const handleNavigate = (type) => {
     'performance': '/performance-testing/dashboard',
     'monitor': '/monitor/dashboard',
     'mcp': '/mcp/console',
-    'docs': '/docs-center'
+    'docs': '/docs-center',
+    'code-monitor': '/code-monitor'
   }
 
   if (routes[type]) {
@@ -606,6 +615,11 @@ const handleNavigate = (type) => {
   &.docs-icon {
     background: #f0f5ff;
     color: #2f54eb;
+  }
+
+  &.code-monitor-icon {
+    background: #f6ffed;
+    color: #52c41a;
   }
 
   &.perf-icon {

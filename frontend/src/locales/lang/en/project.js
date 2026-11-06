@@ -110,6 +110,8 @@ export default {
     mcpConsoleDesc: 'MCP tool call logs and dangerous action approval',
     docsCenter: 'Docs Center',
     docsCenterDesc: 'Browse platform manuals and feature documentation online',
+    codeMonitor: 'Code Monitoring',
+    codeMonitorDesc: 'Extract APIs from source code, and check code quality from source code.',
 
     // Messages
     featureInDevelopment: 'Feature is under development......',
