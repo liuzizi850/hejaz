@@ -52,6 +52,26 @@ def test_token_is_not_part_of_the_git_command(tmp_path: Path, monkeypatch):
             assert os.environ.get(key) == value
 
 
+def test_clone_without_token_does_not_set_url(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr("apps.code_monitor.acquire.subprocess.run", fake_run)
+    dest = tmp_path / "repo"
+    url = "https://example.com/repo.git"
+    clone_repository(url, dest)
+    assert calls == [[
+        "git", "-c", "credential.helper=",
+        "clone", "--depth", "1", "--",
+        url,
+        str(dest),
+    ]]
+    assert "set-url" not in calls[0]
+
+
 def test_clone_timeout_becomes_acquire_error(tmp_path: Path, monkeypatch):
     def fake_run(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
