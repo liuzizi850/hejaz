@@ -1,3 +1,4 @@
+import os
 import subprocess
 import zipfile
 from pathlib import Path
@@ -18,7 +19,7 @@ def redact(text: str, token: str) -> str:
 def clone_repository(url: str, dest: Path, token: str = "", timeout: int = FETCH_TIMEOUT_SECONDS) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["git", "clone", "--depth", "1", url, str(dest)]
-    env = dict(**__import__("os").environ)
+    env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
     if token:
         env["GIT_CONFIG_COUNT"] = "1"
