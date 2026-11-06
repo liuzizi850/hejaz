@@ -88,3 +88,6 @@ docker-compose*.yml
 nginx.conf
 Makefile
 build-multiplatform.sh
+# ?? git worktree
+.worktrees/
+

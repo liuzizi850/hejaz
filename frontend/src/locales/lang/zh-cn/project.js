@@ -110,6 +110,8 @@ export default {
     mcpConsoleDesc: 'MCP 工具调用日志与危险操作待确认审批',
     docsCenter: '文档中心',
     docsCenterDesc: '平台使用手册与功能说明文档在线浏览',
+    codeMonitor: '代码监控',
+    codeMonitorDesc: '支持从源代码中提取 API，也支持从源代码中检查代码质量',
 
     // Messages
     featureInDevelopment: '功能正在开发中......',

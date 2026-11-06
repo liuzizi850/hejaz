@@ -30,5 +30,9 @@ CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
         'LOCATION': 'test-cache',
-    }
+    },
+    'code_monitor': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'code-monitor-test-cache',
+    },
 }
