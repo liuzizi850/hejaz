@@ -238,9 +238,11 @@ def test_git_clone_target_is_temp_root(monkeypatch):
 
 
 def test_celery_task_reads_token_from_cache_then_deletes_it(monkeypatch):
-    from django.core.cache import cache
+    from django.core.cache import caches
 
     from apps.code_monitor.tasks import run_code_monitor_scan, token_cache_key
+
+    cache = caches["code_monitor"]
 
     user = _user()
     config = _config(user)
@@ -268,3 +270,28 @@ def test_celery_task_reads_token_from_cache_then_deletes_it(monkeypatch):
     task.refresh_from_db()
     assert task.celery_task_id
     assert run_code_monitor_scan.run.__code__.co_varnames[:2] == ("self", "task_id")
+
+
+def test_unzip_other_exit_includes_code_and_redacts_stderr(monkeypatch):
+    import subprocess
+
+    task = _zip_scan_task("crash.zip")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            7,
+            stdout="stdout super-secret-token",
+            stderr="stderr super-secret-token " + ("x" * 800),
+        )
+
+    monkeypatch.setattr("apps.code_monitor.pipeline.subprocess.run", fake_run)
+    execute_scan(task.id, token="super-secret-token")
+    task.refresh_from_db()
+    assert task.status == ScanTask.STATUS_FAILED
+    assert "zip 打不开" not in task.error_message
+    assert "7" in task.error_message
+    assert "super-secret-token" not in task.error_message
+    assert "***" in task.error_message
+    assert "stdout" not in task.error_message
+    assert len(task.error_message) < 2000

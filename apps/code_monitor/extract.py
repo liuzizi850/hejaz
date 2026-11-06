@@ -2,7 +2,9 @@ import asyncio
 import json
 from dataclasses import dataclass
 
-from apps.code_monitor.batching import FileChunk
+from apps.code_monitor.batching import FileChunk, render_batch
+
+MODEL_CALL_TIMEOUT_SECONDS = 120
 
 EXCEL_HEADERS = ["名称", "请求方式", "请求地址", "入参", "出参", "源文件"]
 ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
@@ -96,13 +98,6 @@ def dedupe_rows(rows: list[ApiRow]) -> list[ApiRow]:
     return [merged[key] for key in order]
 
 
-def render_batch(chunks: list[FileChunk]) -> str:
-    parts = []
-    for chunk in chunks:
-        parts.append(f"文件: {chunk.source_file}\n{chunk.text}")
-    return "\n\n".join(parts)
-
-
 def call_model(config, chunks: list[FileChunk]) -> str:
     from apps.requirement_analysis.models import AIModelService
 
@@ -110,7 +105,17 @@ def call_model(config, chunks: list[FileChunk]) -> str:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": render_batch(chunks)},
     ]
-    result = asyncio.run(AIModelService.call_openai_compatible_api(config, messages))
+
+    async def _limited():
+        return await asyncio.wait_for(
+            AIModelService.call_openai_compatible_api(config, messages),
+            timeout=MODEL_CALL_TIMEOUT_SECONDS,
+        )
+
+    try:
+        result = asyncio.run(_limited())
+    except TimeoutError as exc:
+        raise TimeoutError("模型调用超时") from exc
     return result["choices"][0]["message"]["content"]
 
 

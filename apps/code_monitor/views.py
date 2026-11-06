@@ -1,12 +1,14 @@
-from django.core.cache import cache
+from django.core.cache import caches
 from django.http import FileResponse
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.code_monitor.acquire import AcquireError, ensure_http_git_url
 from apps.code_monitor.models import CodeAddress, ScanTask
 from apps.code_monitor.serializers import CodeAddressSerializer, ScanTaskSerializer
 from apps.code_monitor.tasks import run_code_monitor_scan, token_cache_key
@@ -21,6 +23,7 @@ class CodeMonitorPagination(PageNumberPagination):
 
 class CodeAddressViewSet(viewsets.ModelViewSet):
     serializer_class = CodeAddressSerializer
+    permission_classes = [IsAuthenticated]
     pagination_class = CodeMonitorPagination
     http_method_names = ["get", "post", "delete", "head", "options"]
 
@@ -33,6 +36,7 @@ class CodeAddressViewSet(viewsets.ModelViewSet):
 
 class ScanTaskViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = ScanTaskSerializer
+    permission_classes = [IsAuthenticated]
     pagination_class = CodeMonitorPagination
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
@@ -51,7 +55,7 @@ class ScanTaskViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Ret
             address = self._own_address(address_id)
             task = ScanTask.objects.create(
                 source_type=ScanTask.SOURCE_GIT,
-                git_url=address.git_url,
+                git_url=self._git_url(address.git_url),
                 model_config=config,
                 created_by=request.user,
             )
@@ -65,10 +69,29 @@ class ScanTaskViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Ret
                 created_by=request.user,
             )
         token = str(request.data.get("token") or "")
+        token_cache = caches["code_monitor"]
         if token:
-            cache.set(token_cache_key(task.id), token, timeout=700)
-        run_code_monitor_scan.delay(task.id)
+            token_cache.set(token_cache_key(task.id), token, timeout=700)
+        try:
+            run_code_monitor_scan.delay(task.id)
+        except Exception:
+            token_cache.delete(token_cache_key(task.id))
+            task.status = ScanTask.STATUS_FAILED
+            task.error_message = "提交扫描失败"
+            try:
+                if task.archive:
+                    task.archive.delete(save=False)
+            except Exception:
+                pass
+            task.save(update_fields=["status", "error_message", "archive", "updated_at"])
+            return Response({"detail": "提交扫描失败"}, status=status.HTTP_400_BAD_REQUEST)
         return Response(ScanTaskSerializer(task).data, status=status.HTTP_201_CREATED)
+
+    def _git_url(self, url):
+        try:
+            return ensure_http_git_url(url)
+        except AcquireError as exc:
+            raise ValidationError(str(exc)) from exc
 
     def _own_address(self, address_id):
         address = CodeAddress.objects.filter(id=address_id, created_by=self.request.user).first()

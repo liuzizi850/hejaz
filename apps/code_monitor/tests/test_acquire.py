@@ -1,3 +1,4 @@
+import os
 import subprocess
 import zipfile
 from pathlib import Path
@@ -27,8 +28,18 @@ def test_token_is_not_part_of_the_git_command(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr("apps.code_monitor.acquire.subprocess.run", fake_run)
     clone_repository("https://example.com/repo.git", tmp_path / "repo", token="super-secret-token")
-    assert "super-secret-token" not in " ".join(seen["cmd"])
-    assert seen["env"]["GIT_CONFIG_VALUE_0"] == "Authorization: Bearer super-secret-token"
+    assert seen["cmd"][:5] == ["git", "clone", "--depth", "1", "--"]
+    assert seen["cmd"][5] == "https://super-secret-token@example.com/repo.git"
+    assert seen["cmd"][6] == str(tmp_path / "repo")
+    assert all(part != "super-secret-token" for part in seen["cmd"])
+    assert "super-secret-token" not in seen["cmd"][-1]
+    env = seen["env"]
+    assert env is not os.environ
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    for key, value in env.items():
+        if key == "GIT_TERMINAL_PROMPT":
+            continue
+        assert os.environ.get(key) == value
 
 
 def test_clone_timeout_becomes_acquire_error(tmp_path: Path, monkeypatch):
@@ -42,6 +53,43 @@ def test_clone_timeout_becomes_acquire_error(tmp_path: Path, monkeypatch):
 
 def test_redact_removes_token():
     assert redact("failed super-secret-token", "super-secret-token") == "failed ***"
+    assert redact("https://a%2Fb@example.com", "a/b") == "https://***@example.com"
+
+
+@pytest.mark.parametrize("url", [
+    "file:///tmp/repo.git",
+    "FILE:///tmp/repo.git",
+    "/tmp/repo.git",
+    r"C:\repo",
+    "./repo.git",
+    "--upload-pack=evil",
+    "-c",
+    "ext::sh -c evil",
+    "ssh://git@example.com/repo.git",
+    "git@example.com:org/repo.git",
+    "git://example.com/repo.git",
+    "http://",
+    "https://",
+])
+def test_clone_rejects_unsafe_git_url(url, tmp_path: Path, monkeypatch):
+    def fail_run(*args, **kwargs):
+        raise AssertionError("git should not run")
+
+    monkeypatch.setattr("apps.code_monitor.acquire.subprocess.run", fail_run)
+    with pytest.raises(AcquireError):
+        clone_repository(url, tmp_path / "repo", token="super-secret-token")
+
+
+def test_clone_error_redacts_token_in_url(tmp_path: Path, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(128, cmd, stderr=f"fatal: unable to access '{cmd[5]}'")
+
+    monkeypatch.setattr("apps.code_monitor.acquire.subprocess.run", fake_run)
+    with pytest.raises(AcquireError) as caught:
+        clone_repository("https://example.com/repo.git", tmp_path / "repo", token="super-secret-token")
+    message = str(caught.value)
+    assert "super-secret-token" not in message
+    assert "***" in message
 
 
 def test_unzip_rejects_path_escape(tmp_path: Path):

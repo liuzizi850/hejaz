@@ -63,12 +63,12 @@ def _fill_root(task: ScanTask, root: Path, token: str) -> None:
         return
     if not task.archive:
         raise AcquireError("取代码失败: zip 打不开")
-    _unzip_with_timeout(Path(task.archive.path), root)
+    _unzip_with_timeout(Path(task.archive.path), root, token)
 
 
 # unzip_archive has no timeout parameter. A child process can be killed when
-# it exceeds FETCH_TIMEOUT_SECONDS. Stdout carries only AcquireError text;
-# stderr is discarded so a traceback cannot carry the git token.
+# it exceeds FETCH_TIMEOUT_SECONDS. Exit 2 carries AcquireError text on stdout.
+# Any other exit keeps the exit code plus redacted, truncated stderr.
 _UNZIP_CHILD = f"""
 import sys
 from pathlib import Path
@@ -82,7 +82,7 @@ except AcquireError as exc:
 """
 
 
-def _unzip_with_timeout(archive_path: Path, dest: Path) -> None:
+def _unzip_with_timeout(archive_path: Path, dest: Path, token: str = "") -> None:
     env = os.environ.copy()
     root = str(settings.BASE_DIR)
     env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
@@ -104,5 +104,9 @@ def _unzip_with_timeout(archive_path: Path, dest: Path) -> None:
         return
     if completed.returncode == 2:
         message = (completed.stdout or "").strip() or "取代码失败: zip 打不开"
-        raise AcquireError(message)
-    raise AcquireError("取代码失败: zip 打不开")
+        raise AcquireError(redact(message, token))
+    stderr = redact((completed.stderr or "").strip(), token)[:500]
+    message = f"取代码失败: 解压进程退出码 {completed.returncode}"
+    if stderr:
+        message = f"{message}: {stderr}"
+    raise AcquireError(message)

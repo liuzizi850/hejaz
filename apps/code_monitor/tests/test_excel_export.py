@@ -17,6 +17,14 @@ def test_workbook_column_order_and_values():
     ]
 
 
+def test_formula_prefixes_are_escaped():
+    content = write_api_workbook([
+        ApiRow("=cmd", "GET", "+url", "-in", "@out", "=src.js"),
+    ])
+    row = [cell.value for cell in load_workbook(BytesIO(content)).active[2]]
+    assert row == ["'=cmd", "GET", "'+url", "'-in", "'@out", "'=src.js"]
+
+
 def test_empty_rows_still_have_header():
     sheet = load_workbook(BytesIO(write_api_workbook([]))).active
     assert [cell.value for cell in sheet[1]] == EXCEL_HEADERS

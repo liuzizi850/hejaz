@@ -371,13 +371,18 @@ if not isinstance(DYPNS_TEMPLATE_PARAM_EXTRA, dict):
         f'DYPNS_TEMPLATE_PARAM_EXTRA 需是 JSON 对象，当前为 {_DYPNS_EXTRA_RAW!r}'
     )
 
-# Cache Configuration (shared across web and Celery workers via Redis)
+# Cache Configuration
+# 默认缓存保持进程内。代码监控的 Git 令牌走独立 Redis 别名，供 Web 与 Celery 共享。
 CACHES = {
     'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+        'TIMEOUT': 300,  # 默认缓存超时5分钟
+    },
+    'code_monitor': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
         'LOCATION': REDIS_URL,
-        'TIMEOUT': 300,  # 默认缓存超时5分钟
-    }
+    },
 }
 
 # Email Configuration

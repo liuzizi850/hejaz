@@ -2,7 +2,7 @@
   <div class="code-monitor">
     <h2>代码监控</h2>
     <div class="layout">
-      <el-menu :default-active="section" class="menu" @select="section = $event">
+      <el-menu :default-active="section" :default-openeds="['extract']" class="menu" @select="section = $event">
         <el-sub-menu index="extract">
           <template #title>提取 API</template>
           <el-menu-item index="addresses">代码地址</el-menu-item>
@@ -45,8 +45,8 @@
               </el-select>
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" :disabled="!models.length" @click="submitTask">开始扫描</el-button>
-              <span v-if="!models.length" class="hint">没有已启用的模型配置</span>
+              <el-button type="primary" :disabled="models.length === 0 || !form.modelConfigId" @click="submitTask">开始扫描</el-button>
+              <span v-if="models.length === 0" class="hint">没有已启用的模型配置</span>
             </el-form-item>
           </el-form>
           <el-table :data="tasks">
@@ -117,12 +117,35 @@ function rowsOf(response) {
   return data.results || []
 }
 
+function firstString(value) {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstString(item)
+      if (found) return found
+    }
+  }
+  return ''
+}
+
 function actionErrorMessage(error, fallback) {
   const status = error.response?.status
   if (status === 401 || (status != null && status >= 500)) return null
   const data = error.response?.data
-  if (data?.non_field_errors?.[0]) return data.non_field_errors[0]
-  if (typeof data?.detail === 'string') return data.detail
+  if (Array.isArray(data)) return firstString(data) || fallback
+  if (data && typeof data === 'object') {
+    const nonField = firstString(data.non_field_errors)
+    if (nonField) return nonField
+    if (typeof data.detail === 'string' && data.detail) return data.detail
+    const detailList = Array.isArray(data.detail) ? firstString(data.detail) : ''
+    if (detailList) return detailList
+    for (const [key, value] of Object.entries(data)) {
+      if (key === 'non_field_errors' || key === 'detail') continue
+      const found = firstString(value)
+      if (found) return found
+    }
+  }
+  if (typeof data === 'string' && data) return data
   return fallback
 }
 
@@ -167,10 +190,11 @@ function onFile(event) {
 }
 
 async function submitTask() {
-  if (!form.modelConfigId) {
+  if (models.value.length === 0) {
     ElMessage.warning('没有已启用的模型配置')
     return
   }
+  if (!form.modelConfigId) return
   if (!form.addressId && !form.file) {
     ElMessage.warning('请选择一个代码地址，或上传一个 zip')
     return

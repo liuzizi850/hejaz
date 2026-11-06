@@ -77,3 +77,23 @@ def test_retry_once_then_raise(monkeypatch):
     with pytest.raises(ModelCallError):
         call_model_with_retry(object(), [FileChunk("a.js", "axios.get('/a')")])
     assert calls["n"] == 2
+
+
+def test_each_model_attempt_stops_at_timeout(monkeypatch):
+    import asyncio
+
+    calls = {"n": 0}
+
+    async def hang(config, messages, max_tokens=None):
+        calls["n"] += 1
+        await asyncio.sleep(30)
+        return {"choices": [{"message": {"content": "[]"}}]}
+
+    monkeypatch.setattr(
+        "apps.requirement_analysis.models.AIModelService.call_openai_compatible_api",
+        hang,
+    )
+    monkeypatch.setattr("apps.code_monitor.extract.MODEL_CALL_TIMEOUT_SECONDS", 0.05)
+    with pytest.raises(ModelCallError, match="模型调用超时"):
+        call_model_with_retry(object(), [FileChunk("a.js", "axios.get('/a')")])
+    assert calls["n"] == 2

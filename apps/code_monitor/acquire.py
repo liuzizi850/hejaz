@@ -2,8 +2,10 @@ import os
 import subprocess
 import zipfile
 from pathlib import Path
+from urllib.parse import quote, urlsplit, urlunsplit
 
 FETCH_TIMEOUT_SECONDS = 600
+_GIT_URL_ERROR = "只允许带主机名的 http 或 https Git 地址"
 
 
 class AcquireError(Exception):
@@ -11,20 +13,53 @@ class AcquireError(Exception):
 
 
 def redact(text: str, token: str) -> str:
-    if token and text and token in text:
-        return text.replace(token, "***")
-    return text or ""
+    if not text:
+        return ""
+    if not token:
+        return text
+    variants = {token, quote(token, safe="")}
+    redacted = text
+    for variant in sorted((item for item in variants if item), key=len, reverse=True):
+        redacted = redacted.replace(variant, "***")
+    return redacted
+
+
+def ensure_http_git_url(url: str) -> str:
+    text = (url or "").strip()
+    if not text or text.startswith("-") or any(char in text for char in "\x00\r\n"):
+        raise AcquireError(_GIT_URL_ERROR)
+    lowered = text.casefold()
+    if lowered.startswith(("ext::", "file:", "ssh:", "git:", "git+")):
+        raise AcquireError(_GIT_URL_ERROR)
+    if "://" not in text:
+        raise AcquireError(_GIT_URL_ERROR)
+    parsed = urlsplit(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise AcquireError(_GIT_URL_ERROR)
+    return text
+
+
+def _clone_url(url: str, token: str) -> str:
+    if not token:
+        return url
+    parsed = urlsplit(url)
+    host = parsed.hostname
+    if not host:
+        raise AcquireError(_GIT_URL_ERROR)
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{quote(token, safe='')}@{host}"
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def clone_repository(url: str, dest: Path, token: str = "", timeout: int = FETCH_TIMEOUT_SECONDS) -> None:
+    url = ensure_http_git_url(url)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["git", "clone", "--depth", "1", url, str(dest)]
+    cmd = ["git", "clone", "--depth", "1", "--", _clone_url(url, token), str(dest)]
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
-    if token:
-        env["GIT_CONFIG_COUNT"] = "1"
-        env["GIT_CONFIG_KEY_0"] = "http.extraheader"
-        env["GIT_CONFIG_VALUE_0"] = f"Authorization: Bearer {token}"
     try:
         subprocess.run(
             cmd,

@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from apps.code_monitor.screening import select_candidate_files
+import pytest
+
+from apps.code_monitor.batching import split_into_batches
+from apps.code_monitor.screening import resolved_path_is_inside, select_candidate_files
 
 
 def _write(path: Path, text: str = "x"):
@@ -53,3 +56,35 @@ def test_content_keywords(tmp_path: Path):
         _write(tmp_path / name, text)
     kept = {p.name for p in select_candidate_files(tmp_path)}
     assert kept == set(samples)
+
+
+def test_resolved_path_outside_scan_root_is_rejected(tmp_path: Path):
+    root = tmp_path / "repo"
+    inside = root / "src" / "api.js"
+    inside.parent.mkdir(parents=True)
+    inside.write_text("axios.get('/a')", encoding="utf-8")
+    outside = tmp_path / ".env"
+    outside.write_text("SECRET=1", encoding="utf-8")
+    escaped = root / ".." / ".env"
+    assert resolved_path_is_inside(inside, root)
+    assert not resolved_path_is_inside(outside, root)
+    assert not resolved_path_is_inside(escaped, root)
+    assert split_into_batches([outside, escaped], root) == []
+
+
+def test_symlink_named_like_api_cannot_escape_scan_root(tmp_path: Path):
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    secret = tmp_path / ".env"
+    secret.write_text("SECRET_TOKEN=super-secret-token", encoding="utf-8")
+    link = root / "src" / "api.js"
+    try:
+        link.symlink_to(secret)
+    except OSError as exc:
+        pytest.skip(f"无法创建符号链接: {exc}")
+    kept = select_candidate_files(root)
+    batches = split_into_batches([link], root)
+    rendered = "".join(chunk.text for batch in batches for chunk in batch)
+    assert kept == []
+    assert batches == []
+    assert "SECRET_TOKEN" not in rendered

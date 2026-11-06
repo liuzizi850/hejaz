@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.code_monitor.acquire import AcquireError, ensure_http_git_url
 from apps.code_monitor.models import CodeAddress, ScanTask
 
 
@@ -8,6 +9,12 @@ class CodeAddressSerializer(serializers.ModelSerializer):
         model = CodeAddress
         fields = ["id", "name", "git_url", "created_at"]
         read_only_fields = ["id", "created_at"]
+
+    def validate_git_url(self, value):
+        try:
+            return ensure_http_git_url(value)
+        except AcquireError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
 
 class ScanTaskSerializer(serializers.ModelSerializer):

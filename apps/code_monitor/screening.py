@@ -35,9 +35,22 @@ CONTENT_KEYWORDS = (
 )
 
 
+def resolved_path_is_inside(path: Path, root: Path) -> bool:
+    try:
+        if path.is_symlink():
+            return False
+        resolved = path.resolve()
+        resolved.relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return resolved.is_file()
+
+
 def select_candidate_files(root: Path) -> list[Path]:
     kept = []
     for path in _walk(root):
+        if not resolved_path_is_inside(path, root):
+            continue
         if _path_matches(path, root) or _content_matches(path):
             kept.append(path)
     return sorted(kept)
@@ -45,10 +58,17 @@ def select_candidate_files(root: Path) -> list[Path]:
 
 def _walk(root: Path):
     for dirpath, dirnames, filenames in os_walk(root):
-        dirnames[:] = [name for name in dirnames if name not in SKIP_DIR_NAMES]
+        kept_dirs = []
+        for name in dirnames:
+            if name in SKIP_DIR_NAMES:
+                continue
+            if (Path(dirpath) / name).is_symlink():
+                continue
+            kept_dirs.append(name)
+        dirnames[:] = kept_dirs
         for filename in filenames:
             path = Path(dirpath) / filename
-            if _skipped_file(path):
+            if path.is_symlink() or _skipped_file(path):
                 continue
             yield path
 
