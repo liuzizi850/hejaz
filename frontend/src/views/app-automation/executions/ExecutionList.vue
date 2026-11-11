@@ -36,6 +36,9 @@
             <el-option :label="$t('appAutomation.status.error')" value="error" />
             <el-option :label="$t('appAutomation.status.stopped')" value="stopped" />
           </el-select>
+          <el-button :disabled="!selectedRows.length || batching || deleting" @click="batchDownload">批量下载</el-button>
+          <el-button :disabled="!selectedRows.length || batching || deleting" @click="batchExport">批量导出</el-button>
+          <el-button type="danger" plain :disabled="!selectedRows.length || batching || deleting" @click="batchRemoveExecutions">批量删除</el-button>
           <el-button @click="loadExecutions">
             <el-icon><Refresh /></el-icon>
             {{ $t('appAutomation.common.refresh') }}
@@ -50,8 +53,11 @@
         v-loading="loading"
         :data="executions"
         stripe
+        row-key="id"
         style="width: 100%"
+        @selection-change="onSelectionChange"
       >
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="case_name" :label="$t('appAutomation.execution.testCase')" min-width="180" />
         <el-table-column prop="device_name" :label="$t('appAutomation.execution.device')" width="150" />
         <el-table-column :label="$t('appAutomation.common.status')" width="100">
@@ -94,7 +100,7 @@
             {{ row.finished_at ? formatDateTime(row.finished_at) : '-' }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('appAutomation.common.operation')" width="240" fixed="right">
+        <el-table-column :label="$t('appAutomation.common.operation')" width="300" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'running'"
@@ -106,7 +112,7 @@
               {{ $t('appAutomation.common.stop') }}
             </el-button>
             <el-button
-              v-if="row.report_path"
+              v-if="row.report_path || row.result_bundle_path"
               type="primary"
               size="small"
               text
@@ -123,14 +129,24 @@
             >
               {{ $t('appAutomation.execution.viewError') }}
             </el-button>
-            <el-link
+            <a
               v-if="row.result_bundle_path"
-              type="primary"
+              class="bundle-download"
               :href="bundleMediaUrl(row.result_bundle_path)"
-              target="_blank"
+              download
             >
               下载
-            </el-link>
+            </a>
+            <el-button
+              v-if="row.status !== 'running' && row.status !== 'pending'"
+              type="danger"
+              size="small"
+              text
+              :disabled="deleting"
+              @click="removeExecution(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -174,6 +190,27 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="reportDialogVisible" title="执行结果" width="860px">
+      <video v-if="reportVideo" class="report-video" :src="reportVideo" controls></video>
+      <el-table v-if="reportSteps.length" :data="reportSteps" max-height="420">
+        <el-table-column prop="order" label="顺序" width="70" />
+        <el-table-column prop="name" label="操作" min-width="180" />
+        <el-table-column label="结果" width="80">
+          <template #default="{ row }">{{ stepStatusText(row.status) }}</template>
+        </el-table-column>
+        <el-table-column label="截图" width="140">
+          <template #default="{ row }">
+            <img v-if="row.screenshot_url" class="report-shot" :src="row.screenshot_url" alt="" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="reason" label="说明" min-width="120" />
+      </el-table>
+      <template #footer>
+        <a v-if="reportDownload" class="report-download" :href="reportDownload" download>下载压缩包</a>
+        <el-button type="primary" @click="reportDialogVisible = false">{{ $t('appAutomation.common.close') }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -182,6 +219,12 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getExecutionList,
+  getExecutionBundle,
+  batchDownloadExecutions,
+  batchExportExecutions,
+  deleteExecution,
+  batchDeleteExecutions,
+  saveBlobResponse,
   stopExecution as apiStopExecution,
   getAppProjects
 } from '@/api/app-automation'
@@ -200,6 +243,78 @@ const projectList = ref([])
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const selectedRows = ref([])
+const batching = ref(false)
+const deleting = ref(false)
+
+const onSelectionChange = (rows) => {
+  selectedRows.value = rows
+}
+
+const runBatch = async (request, fallbackName) => {
+  if (!selectedRows.value.length) {
+    ElMessage.warning('请选择执行记录')
+    return
+  }
+  batching.value = true
+  try {
+    const response = await request(selectedRows.value.map(row => row.id))
+    await saveBlobResponse(response, fallbackName)
+  } catch (error) {
+    ElMessage.error(error.message || '导出失败')
+  } finally {
+    batching.value = false
+  }
+}
+
+const batchDownload = () => runBatch(batchDownloadExecutions, '执行报告.zip')
+const batchExport = () => runBatch(batchExportExecutions, '执行报告.xlsx')
+
+const removeExecution = async (row) => {
+  try {
+    await ElMessageBox.confirm('确定删除这条执行记录吗？删除后不能恢复。', '删除', { type: 'warning' })
+  } catch {
+    return
+  }
+  deleting.value = true
+  try {
+    await deleteExecution(row.id)
+    ElMessage.success('已删除')
+    selectedRows.value = selectedRows.value.filter(item => item.id !== row.id)
+    await loadExecutions()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || error.message || '删除失败')
+  } finally {
+    deleting.value = false
+  }
+}
+
+const batchRemoveExecutions = async () => {
+  if (!selectedRows.value.length) {
+    ElMessage.warning('请选择执行记录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${selectedRows.value.length} 条执行记录吗？删除后不能恢复。`,
+      '批量删除',
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  deleting.value = true
+  try {
+    await batchDeleteExecutions(selectedRows.value.map(row => row.id))
+    ElMessage.success('已删除')
+    selectedRows.value = []
+    await loadExecutions()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || error.message || '删除失败')
+  } finally {
+    deleting.value = false
+  }
+}
 
 const errorDialogVisible = ref(false)
 const currentError = ref('')
@@ -252,16 +367,36 @@ const stopExecution = async (execution) => {
   }
 }
 
-const viewReport = (execution) => {
+const reportDialogVisible = ref(false)
+const reportSteps = ref([])
+const reportVideo = ref('')
+const reportDownload = ref('')
+
+const stepStatusText = (status) => {
+  if (status === 'passed') return '通过'
+  if (status === 'failed') return '失败'
+  return status || ''
+}
+
+const viewReport = async (execution) => {
   if (!execution || !execution.id) {
     ElMessage.warning(t('appAutomation.execution.invalidExecutionId'))
     return
   }
-  
-  const reportUrl = `/api/app-automation/executions/${execution.id}/report/`
-  
-  // 在新标签页打开报告
-  window.open(reportUrl, '_blank')
+  if (execution.result_bundle_path) {
+    try {
+      const res = await getExecutionBundle(execution.id)
+      reportSteps.value = res.data.steps || []
+      reportVideo.value = res.data.video_url || ''
+      reportDownload.value = res.data.download_url || ''
+      reportDialogVisible.value = true
+      return
+    } catch (error) {
+      ElMessage.error('报告打不开')
+      return
+    }
+  }
+  window.open(`/api/app-automation/executions/${execution.id}/report/`, '_blank')
 }
 
 const viewError = (execution) => {
@@ -384,5 +519,25 @@ onUnmounted(() => {
     white-space: pre-wrap;
     word-wrap: break-word;
   }
+}
+
+.report-video {
+  width: 100%;
+  max-height: 240px;
+  margin-bottom: 12px;
+  background: #000;
+}
+
+.report-shot {
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  background: #f5f7fa;
+}
+
+.bundle-download,
+.report-download {
+  margin-right: 12px;
+  color: #409eff;
 }
 </style>

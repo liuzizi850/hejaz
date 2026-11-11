@@ -17,7 +17,8 @@ export default {
     monitor: 'Monitor Center',
     performanceTesting: 'Performance Testing',
     mcp: 'MCP Console',
-    docs: 'Docs Center'
+    docs: 'Docs Center',
+    codeMonitor: 'Code Monitoring'
   },
   menu: {
     // AI Test Case Generation
@@ -103,6 +104,13 @@ export default {
     // MCP
     mcpConsole: 'MCP Console',
     // Docs Center
-    docsCenter: 'Docs Center'
+    docsCenter: 'Docs Center',
+    extractApi: 'Extract API',
+    codeAddresses: 'Code Addresses',
+    scanTasks: 'Scan Tasks',
+    downloadResults: 'Download Results',
+    requirementReview: 'Requirement Check',
+    reviewTasks: 'Check Tasks',
+    reviewReports: 'Download Reports'
   }
 }

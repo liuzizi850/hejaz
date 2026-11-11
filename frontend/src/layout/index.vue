@@ -4,10 +4,11 @@
       <!-- 侧边栏 -->
       <el-aside width="240px">
         <div class="logo" @click="router.push('/home')" style="cursor: pointer;">
-          <img :src="logoImage" alt="TestHub" class="logo-img" />
+          <img :src="logoImage" alt="Hejaz" class="logo-img" />
         </div>
         <el-menu
           :default-active="$route.path"
+          :default-openeds="currentModule === 'code-monitor' ? ['code-monitor-extract', 'code-monitor-review'] : []"
           router
           background-color="#001529"
           text-color="#fff"
@@ -375,6 +376,27 @@
               <span>{{ $t('menu.docsCenter') }}</span>
             </el-menu-item>
           </template>
+
+          <!-- 代码监控模块菜单 -->
+          <template v-else-if="currentModule === 'code-monitor'">
+            <el-sub-menu index="code-monitor-extract">
+              <template #title>
+                <el-icon><Tickets /></el-icon>
+                <span>{{ $t('menu.extractApi') }}</span>
+              </template>
+              <el-menu-item index="/code-monitor/addresses">{{ $t('menu.codeAddresses') }}</el-menu-item>
+              <el-menu-item index="/code-monitor/tasks">{{ $t('menu.scanTasks') }}</el-menu-item>
+              <el-menu-item index="/code-monitor/downloads">{{ $t('menu.downloadResults') }}</el-menu-item>
+            </el-sub-menu>
+            <el-sub-menu index="code-monitor-review">
+              <template #title>
+                <el-icon><Check /></el-icon>
+                <span>{{ $t('menu.requirementReview') }}</span>
+              </template>
+              <el-menu-item index="/code-monitor/review-tasks">{{ $t('menu.reviewTasks') }}</el-menu-item>
+              <el-menu-item index="/code-monitor/review-downloads">{{ $t('menu.reviewReports') }}</el-menu-item>
+            </el-sub-menu>
+          </template>
         </el-menu>
       </el-aside>
 
@@ -488,6 +510,7 @@ const currentModule = computed(() => {
   if (route.path.startsWith('/performance-testing')) return 'performance-testing'
   if (route.path.startsWith('/mcp')) return 'mcp'
   if (route.path.startsWith('/docs-center')) return 'docs'
+  if (route.path.startsWith('/code-monitor')) return 'code-monitor'
   return ''
 })
 
@@ -504,7 +527,8 @@ const moduleName = computed(() => {
     'monitor': t('modules.monitor'),
     'performance-testing': t('modules.performanceTesting'),
     'mcp': t('modules.mcp'),
-    'docs': t('modules.docs')
+    'docs': t('modules.docs'),
+    'code-monitor': t('modules.codeMonitor')
   }
   return map[currentModule.value] || ''
 })
@@ -590,6 +614,12 @@ const breadcrumbTitle = computed(() => {
     '/llm-judge/history': t('menu.judgeHistory'),
     '/llm-judge/rubrics': t('menu.judgeRubrics'),
     '/llm-judge/knowledge': t('menu.judgeKnowledgeBase'),
+
+    '/code-monitor/addresses': t('menu.codeAddresses'),
+    '/code-monitor/tasks': t('menu.scanTasks'),
+    '/code-monitor/downloads': t('menu.downloadResults'),
+    '/code-monitor/review-tasks': t('menu.reviewTasks'),
+    '/code-monitor/review-downloads': t('menu.reviewReports'),
 
     '/profile': t('nav.profile')
   }

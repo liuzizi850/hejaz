@@ -21,6 +21,39 @@ def _distance(left, right):
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
 
+def _norm(value):
+    """Ignore line breaks. 'Ask Sheikh\\nWahda' is the same control as 'Ask Sheikh Wahda'."""
+    return " ".join((value or "").replace("&#10;", " ").split()).casefold()
+
+
+def _bounds_area(node):
+    bounds = (node or {}).get("bounds") or {}
+    try:
+        area = float(bounds["w"]) * float(bounds["h"])
+    except (KeyError, TypeError, ValueError):
+        return 1.0
+    return area if area > 0 else 1.0
+
+
+def find_by_label(nodes, label):
+    """Find the control whose text or description matches the recorded name."""
+    wanted = _norm(label)
+    if len(wanted) < 2:
+        return None
+    exact = []
+    partial = []
+    for node in nodes or []:
+        values = [_norm(node.get("text")), _norm(node.get("content_desc"))]
+        if wanted in values:
+            exact.append(node)
+        elif any(wanted in item for item in values if item):
+            partial.append(node)
+    chosen = exact or partial
+    if not chosen:
+        return None
+    return min(chosen, key=_bounds_area)
+
+
 def select_by_identity(step, nodes):
     """按 resource_id、content_desc、text+class_name 的顺序选一个节点。找不到返回 None。"""
     step = step or {}

@@ -145,6 +145,33 @@ class RecordingApiTests(TestCase):
         assert case.start_screen == "start.png"
         assert case.ui_flow == {}
 
+    def test_save_copies_the_recorded_start_page(self):
+        session = AppRecordingSession.objects.create(
+            device=self.device,
+            user=self.user,
+            status="stopped",
+            screen={
+                "width": 1080,
+                "height": 1920,
+                "start_page": {
+                    "package": "com.example.app",
+                    "activity": ".Main",
+                    "anchors": [{"text": "首页"}],
+                },
+            },
+            steps=[{"type": "click", "order": 1, "name": "点击 首页", "text": "首页"}],
+        )
+        with patch("apps.app_automation.views.recording_views.read_ui_dump", return_value=""):
+            response = self.client.post(
+                f"/api/app-automation/recording-sessions/{session.id}/save/",
+                {"name": "首页用例", "steps": session.steps},
+                format="json",
+            )
+        assert response.status_code == 201
+        case = AppTestCase.objects.get(name="首页用例")
+        assert case.event_chain["start_page"]["package"] == "com.example.app"
+        assert case.event_chain["screen"] == {"width": 1080, "height": 1920}
+
     def test_events_accepts_unauthenticated_click(self):
         session = AppRecordingSession.objects.create(
             device=self.device, user=self.user, status="recording"
@@ -162,6 +189,8 @@ class RecordingApiTests(TestCase):
                     "bounds": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1},
                     "screen": {"width": 1080, "height": 2400},
                     "duration_ms": 80,
+                    "x": 0.2,
+                    "y": 0.3,
                 },
                 format="json",
             )
@@ -170,6 +199,21 @@ class RecordingApiTests(TestCase):
         assert len(session.steps) == 1
         assert session.steps[0]["type"] == "click"
         assert session.steps[0]["resource_id"] == "com.app:id/login"
+
+    def test_accessibility_click_without_a_point_is_skipped(self):
+        session = AppRecordingSession.objects.create(
+            device=self.device, user=self.user, status="recording"
+        )
+        guest = APIClient()
+        response = guest.post(
+            "/api/app-automation/recording-sessions/%s/events/" % session.id,
+            {"event_type": "click", "text": "wahda"},
+            format="json",
+        )
+        assert response.status_code == 200
+        assert response.data["skipped"] is True
+        session.refresh_from_db()
+        assert session.steps == []
 
     def test_unknown_event_returns_400(self):
         session = AppRecordingSession.objects.create(
@@ -286,14 +330,20 @@ class RecordingApiTests(TestCase):
             "input_text": "zz",
         }, format="json")
         assert other.status_code == 201
-        guest.post(url, {"event_type": "click", "resource_id": "com.app:id/name", "text": "确定"}, format="json")
+        guest.post(url, {
+            "event_type": "swipe",
+            "from_x": 0.2,
+            "from_y": 0.8,
+            "to_x": 0.2,
+            "to_y": 0.3,
+        }, format="json")
         guest.post(url, {
             "event_type": "input",
             "resource_id": "com.app:id/name",
             "input_text": "next",
         }, format="json")
         session.refresh_from_db()
-        assert [step["type"] for step in session.steps] == ["input", "input", "click", "input"]
+        assert [step["type"] for step in session.steps] == ["input", "input", "swipe", "input"]
         assert session.steps[0]["input_text"] == "abcd"
         assert session.steps[1]["input_text"] == "zz"
         assert session.steps[3]["input_text"] == "next"
@@ -320,6 +370,8 @@ class RecordingApiTests(TestCase):
                     "text": "登录",
                     "bounds": {"x": 0.25, "y": 0.2, "w": 0.2, "h": 0.2},
                     "screen": {"width": 200, "height": 100},
+                    "x": 0.3,
+                    "y": 0.3,
                 },
                 format="json",
             )
@@ -342,6 +394,8 @@ class RecordingApiTests(TestCase):
                     "event_type": "click",
                     "resource_id": "com.app:id/login",
                     "bounds": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1},
+                    "x": 0.2,
+                    "y": 0.25,
                 },
                 format="json",
             )

@@ -7,6 +7,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Rect;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.ViewConfiguration;
@@ -42,14 +44,31 @@ public class RecorderService extends AccessibilityService {
         return thread;
     });
 
+    private static final long FIELD_WATCH_MS = 300;
+
     private volatile boolean posting;
     private volatile String ingestUrl = "";
+    private volatile String lastSentText = "";
     private BroadcastReceiver controlReceiver;
     private boolean receiverRegistered;
+    private Handler handler;
+    private final Runnable watchField = new Runnable() {
+        @Override
+        public void run() {
+            if (!posting) {
+                return;
+            }
+            sampleFocusedText();
+            if (handler != null) {
+                handler.postDelayed(this, FIELD_WATCH_MS);
+            }
+        }
+    };
 
     @Override
     public void onCreate() {
         super.onCreate();
+        handler = new Handler(Looper.getMainLooper());
         registerControlReceiver();
     }
 
@@ -58,8 +77,12 @@ public class RecorderService extends AccessibilityService {
         if (!posting || ingestUrl == null || ingestUrl.isEmpty() || event == null) {
             return;
         }
+        sampleFocusedText();
         String eventType = eventTypeOf(event.getEventType());
         if (eventType == null) {
+            return;
+        }
+        if ("input".equals(eventType) && !rememberInputText(event)) {
             return;
         }
         final String url = ingestUrl;
@@ -84,6 +107,7 @@ public class RecorderService extends AccessibilityService {
     public void onDestroy() {
         posting = false;
         ingestUrl = "";
+        stopWatching();
         if (receiverRegistered && controlReceiver != null) {
             try {
                 unregisterReceiver(controlReceiver);
@@ -133,10 +157,13 @@ public class RecorderService extends AccessibilityService {
             }
             ingestUrl = url.trim();
             posting = true;
+            lastSentText = "";
+            startWatching();
             Log.i(TAG, "recording started");
         } else if (ACTION_STOP.equals(intent.getAction())) {
             posting = false;
             ingestUrl = "";
+            stopWatching();
             Log.i(TAG, "recording stopped");
         }
     }
@@ -196,7 +223,10 @@ public class RecorderService extends AccessibilityService {
         }
         if ("input".equals(eventType)) {
             String changed = eventText(event);
-            return changed.isEmpty() ? nodeText : changed;
+            if (changed.length() >= nodeText.length() && !changed.isEmpty()) {
+                return changed;
+            }
+            return nodeText.isEmpty() ? changed : nodeText;
         }
         return nodeText.isEmpty() ? eventText(event) : nodeText;
     }
@@ -280,6 +310,104 @@ public class RecorderService extends AccessibilityService {
             }
         }
         return builder.toString();
+    }
+
+    private void startWatching() {
+        if (handler == null) {
+            return;
+        }
+        handler.removeCallbacks(watchField);
+        handler.post(watchField);
+    }
+
+    private void stopWatching() {
+        if (handler != null) {
+            handler.removeCallbacks(watchField);
+        }
+        lastSentText = "";
+    }
+
+    private boolean rememberInputText(AccessibilityEvent event) {
+        AccessibilityNodeInfo source = event.getSource();
+        try {
+            boolean password = source != null && source.isPassword();
+            String nodeText = source == null ? "" : asString(source.getText());
+            String text = visibleText(event, "input", password, nodeText);
+            if (password) {
+                return true;
+            }
+            if (text.isEmpty() || text.equals(lastSentText)) {
+                return false;
+            }
+            lastSentText = text;
+            return true;
+        } finally {
+            if (source != null) {
+                source.recycle();
+            }
+        }
+    }
+
+    private void sampleFocusedText() {
+        if (!posting || ingestUrl == null || ingestUrl.isEmpty()) {
+            return;
+        }
+        AccessibilityNodeInfo focused = null;
+        try {
+            focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+            if (focused == null || focused.isPassword()) {
+                return;
+            }
+            String text = asString(focused.getText());
+            if (text.isEmpty()) {
+                lastSentText = "";
+                return;
+            }
+            if (text.equals(lastSentText)) {
+                return;
+            }
+            lastSentText = text;
+            final String payload = buildInputPayload(focused, text);
+            final String url = ingestUrl;
+            Log.i(TAG, "field text posted, length=" + text.length());
+            poster.execute(() -> {
+                if (!posting) {
+                    return;
+                }
+                postJson(url, payload);
+            });
+        } catch (Exception error) {
+            Log.w(TAG, "sample field failed", error);
+        } finally {
+            if (focused != null) {
+                focused.recycle();
+            }
+        }
+    }
+
+    private String buildInputPayload(AccessibilityNodeInfo node, String text) throws JSONException {
+        JSONObject bounds = new JSONObject();
+        Rect rect = new Rect();
+        node.getBoundsInScreen(rect);
+        int[] screen = readScreenSize();
+        bounds.put("x", fraction(rect.left, screen[0]));
+        bounds.put("y", fraction(rect.top, screen[1]));
+        bounds.put("w", fraction(rect.width(), screen[0]));
+        bounds.put("h", fraction(rect.height(), screen[1]));
+        JSONObject screenJson = new JSONObject();
+        screenJson.put("width", screen[0]);
+        screenJson.put("height", screen[1]);
+        JSONObject body = new JSONObject();
+        body.put("event_type", "input");
+        body.put("resource_id", asString(node.getViewIdResourceName()));
+        body.put("content_desc", asString(node.getContentDescription()));
+        body.put("text", text);
+        body.put("class_name", asString(node.getClassName()));
+        body.put("bounds", bounds);
+        body.put("screen", screenJson);
+        body.put("password", false);
+        body.put("input_text", text);
+        return body.toString();
     }
 
     private void postJson(String url, String json) {

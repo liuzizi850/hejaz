@@ -3,6 +3,69 @@ SERVICE_COMPONENT = "com.testhub.recorder/com.testhub.recorder.RecorderService"
 RECORDER_PORT = 27183
 
 
+def _configured_adb_path():
+    try:
+        from django.conf import settings
+        if not settings.configured:
+            return ""
+        from apps.app_automation.models import AppTestConfig
+        config = AppTestConfig.objects.first()
+        return (config.adb_path or "") if config else ""
+    except Exception:
+        return ""
+
+
+def _sdk_adb_candidates():
+    import os
+    roots = []
+    for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        value = os.environ.get(key)
+        if value:
+            roots.append(value)
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        roots.append(os.path.join(local, "Android", "Sdk"))
+    home = os.path.expanduser("~")
+    roots.extend([
+        os.path.join(home, "AppData", "Local", "Android", "Sdk"),
+        os.path.join(home, "Library", "Android", "sdk"),
+        os.path.join(home, "Android", "Sdk"),
+    ])
+    candidates = []
+    for root in roots:
+        candidates.append(os.path.join(root, "platform-tools", "adb.exe"))
+        candidates.append(os.path.join(root, "platform-tools", "adb"))
+    return candidates
+
+
+def adb_executable():
+    """配置里的路径优先；命令名 adb 不在 PATH 时改用本机 Android SDK。"""
+    import os
+    import shutil
+    configured = _configured_adb_path()
+    if configured and configured != "adb" and (os.path.isfile(configured) or shutil.which(configured)):
+        return configured
+    found = shutil.which("adb")
+    if found:
+        return found
+    for candidate in _sdk_adb_candidates():
+        if os.path.isfile(candidate):
+            return candidate
+    return configured or "adb"
+
+
+def ensure_adb_on_path():
+    import os
+    executable = adb_executable()
+    folder = os.path.dirname(executable)
+    if not folder or not os.path.isdir(folder):
+        return executable
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    if folder not in parts:
+        os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+    return executable
+
+
 def accessibility_enabled(command_output):
     return SERVICE_COMPONENT in (command_output or "")
 
@@ -15,6 +78,7 @@ def service_enabled(device_id, command_output=None):
     if isinstance(command_output, str):
         return accessibility_enabled(command_output)
     import subprocess
+    ensure_adb_on_path()
     try:
         result = subprocess.run(
             [
@@ -57,6 +121,7 @@ def stop_broadcast_args(device_id):
 
 def _run_adb(args):
     import subprocess
+    ensure_adb_on_path()
     try:
         result = subprocess.run(args, capture_output=True, timeout=5)
         return result.returncode == 0
@@ -171,6 +236,7 @@ def _encode_image(path, image):
 
 def capture_png(device_id):
     import subprocess
+    ensure_adb_on_path()
     return subprocess.check_output(
         ["adb", "-s", device_id, "exec-out", "screencap", "-p"],
         timeout=8,
@@ -239,14 +305,47 @@ def to_media_url(path):
     return prefix + rel.replace("\\", "/")
 
 
+def hierarchy_xml(command_output, xml):
+    """Ignore a failed dump. An error leaves the previous file in place, which is the wrong page."""
+    if "ERROR" in (command_output or "").upper():
+        return ""
+    body = xml or ""
+    if "<hierarchy" not in body and "<node" not in body:
+        return ""
+    return body
+
+
 def read_ui_dump(device_id):
     """执行 adb shell uiautomator dump 后读回 XML。失败返回空字符串。"""
     import subprocess
+    ensure_adb_on_path()
     remote = "/sdcard/testhub-uidump.xml"
-    dump = subprocess.run(["adb", "-s", device_id, "shell", "uiautomator", "dump", remote], capture_output=True)
-    if dump.returncode != 0:
-        return ""
-    read = subprocess.run(["adb", "-s", device_id, "shell", "cat", remote], capture_output=True)
-    if read.returncode != 0:
-        return ""
-    return read.stdout.decode("utf-8", errors="ignore")
+    for _attempt in range(2):
+        subprocess.run(
+            ["adb", "-s", device_id, "shell", "rm", "-f", remote],
+            capture_output=True,
+            timeout=8,
+        )
+        try:
+            dump = subprocess.run(
+                ["adb", "-s", device_id, "shell", "uiautomator", "dump", remote],
+                capture_output=True,
+                timeout=8,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        output = ((dump.stdout or b"") + (dump.stderr or b"")).decode("utf-8", "replace")
+        if dump.returncode != 0:
+            continue
+        try:
+            read = subprocess.run(
+                ["adb", "-s", device_id, "shell", "cat", remote],
+                capture_output=True,
+                timeout=8,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        xml = hierarchy_xml(output, (read.stdout or b"").decode("utf-8", "replace"))
+        if xml:
+            return xml
+    return ""

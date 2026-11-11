@@ -1,5 +1,12 @@
+import os
+
 import pytest
-from apps.app_automation.recording.adb_gateway import crop_fraction, safe_device_filename
+from apps.app_automation.recording.adb_gateway import (
+    adb_executable,
+    crop_fraction,
+    ensure_adb_on_path,
+    safe_device_filename,
+)
 from apps.app_automation.recording.replay import ScreenRecordError
 from apps.app_automation.runners.event_chain_runner import (
     AdbEventDevice,
@@ -7,6 +14,34 @@ from apps.app_automation.runners.event_chain_runner import (
     input_text_command,
     segment_count,
 )
+
+
+def test_adb_executable_uses_sdk_when_command_is_missing(monkeypatch, tmp_path):
+    adb = tmp_path / "platform-tools" / "adb.exe"
+    adb.parent.mkdir()
+    adb.write_bytes(b"")
+    monkeypatch.setattr(
+        "apps.app_automation.recording.adb_gateway._configured_adb_path",
+        lambda: "",
+    )
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setenv("ANDROID_HOME", str(tmp_path))
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    assert adb_executable() == str(adb)
+
+
+def test_ensure_adb_on_path_prepends_platform_tools(monkeypatch, tmp_path):
+    adb = tmp_path / "platform-tools" / "adb.exe"
+    adb.parent.mkdir()
+    adb.write_bytes(b"")
+    monkeypatch.setattr(
+        "apps.app_automation.recording.adb_gateway.adb_executable",
+        lambda: str(adb),
+    )
+    monkeypatch.setenv("PATH", r"C:\Windows")
+    assert ensure_adb_on_path() == str(adb)
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(adb.parent)
 
 
 def test_safe_device_filename():

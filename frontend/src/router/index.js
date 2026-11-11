@@ -65,12 +65,38 @@ const routes = [
     {
         path: '/code-monitor',
         component: Layout,
+        redirect: '/code-monitor/addresses',
         meta: { requiresAuth: true },
         children: [
             {
-                path: '',
-                name: 'CodeMonitor',
-                component: () => import('@/views/code-monitor/CodeMonitor.vue')
+                path: 'addresses',
+                name: 'CodeMonitorAddresses',
+                component: () => import('@/views/code-monitor/CodeMonitor.vue'),
+                meta: { title: '代码地址' }
+            },
+            {
+                path: 'tasks',
+                name: 'CodeMonitorTasks',
+                component: () => import('@/views/code-monitor/CodeMonitor.vue'),
+                meta: { title: '扫描任务' }
+            },
+            {
+                path: 'downloads',
+                name: 'CodeMonitorDownloads',
+                component: () => import('@/views/code-monitor/CodeMonitor.vue'),
+                meta: { title: '下载结果' }
+            },
+            {
+                path: 'review-tasks',
+                name: 'CodeMonitorReviewTasks',
+                component: () => import('@/views/code-monitor/CodeMonitor.vue'),
+                meta: { title: '检查任务' }
+            },
+            {
+                path: 'review-downloads',
+                name: 'CodeMonitorReviewDownloads',
+                component: () => import('@/views/code-monitor/CodeMonitor.vue'),
+                meta: { title: '下载报告' }
             }
         ]
     },

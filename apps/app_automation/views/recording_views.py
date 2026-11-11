@@ -14,10 +14,29 @@ from ..recording.adb_gateway import (
     capture_start_screen,
     copy_case_start_screen,
     parse_ui_dump,
+    read_ui_dump,
     save_step_image,
     service_enabled,
 )
-from ..recording.ingest import parse_ingested_event
+from ..recording.page_signature import capture_page, event_chain_document, merge_screen, remember_after
+from ..recording.screen_labels import controls_from_dump
+from ..recording.ingest import (
+    absorb_typing_clicks,
+    apply_control_label,
+    finger_points,
+    parse_ingested_event,
+    place_input,
+    touch_point,
+)
+from ..recording.touch_listener import start_touch_listener, stop_touch_listener
+
+
+def _seal_steps(session, steps):
+    try:
+        remember_after(steps, controls_from_dump(read_ui_dump(session.device.device_id)))
+    except Exception:
+        return steps
+    return steps
 
 
 def _template_for_step(device_id, session_id, order, bounds=None):
@@ -25,29 +44,6 @@ def _template_for_step(device_id, session_id, order, bounds=None):
         return save_step_image(device_id, session_id, order, bounds=bounds)
     except Exception:
         return ""
-
-
-def _collapsible_input(steps, payload):
-    if (payload or {}).get("event_type") != "input" or not steps:
-        return False
-    previous = steps[-1]
-    return previous.get("type") == "input" and (previous.get("resource_id") or "") == (payload.get("resource_id") or "")
-
-
-def _merge_input(previous, step):
-    merged = dict(previous)
-    merged["input_text"] = step.get("input_text") or ""
-    merged["order"] = previous.get("order")
-    if not step.get("password"):
-        merged["text"] = step.get("text") or ""
-        merged["name"] = step.get("name") or merged.get("name") or ""
-    if step.get("template"):
-        merged["template"] = step["template"]
-    if step.get("bounds"):
-        merged["bounds"] = step["bounds"]
-    if step.get("screen"):
-        merged["screen"] = step["screen"]
-    return merged
 
 
 class AppRecordingSessionViewSet(viewsets.ViewSet):
@@ -62,9 +58,9 @@ class AppRecordingSessionViewSet(viewsets.ViewSet):
         if device.status == "locked":
             return Response({"message": "设备已被锁定"}, status=status.HTTP_400_BAD_REQUEST)
         if getattr(settings, "APP_RECORDER_SERVICE_ENABLED", None) is False:
-            return Response({"message": "请在系统设置中打开 TestHub 录制服务"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": "请在系统设置中打开 Hejaz 录制服务"}, status=status.HTTP_400_BAD_REQUEST)
         if not service_enabled(device.device_id):
-            return Response({"message": "请在系统设置中打开 TestHub 录制服务"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": "请在系统设置中打开 Hejaz 录制服务"}, status=status.HTTP_400_BAD_REQUEST)
         if not apply_reverse(device.device_id):
             return Response({"message": "adb reverse 失败"}, status=status.HTTP_400_BAD_REQUEST)
         device.lock(request.user)
@@ -76,15 +72,25 @@ class AppRecordingSessionViewSet(viewsets.ViewSet):
             session.save(update_fields=["start_screen", "updated_at"])
         except Exception:
             session.start_screen = ""
+        try:
+            page = capture_page(device.device_id)
+        except Exception:
+            page = None
+        if page:
+            session.screen = {"start_page": page}
+            session.save(update_fields=["screen", "updated_at"])
         broadcast_start(device.device_id, session.id)
+        start_touch_listener(device.device_id, session.id)
         return Response({"id": session.id, "status": session.status}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
     def interrupt(self, request, pk=None):
         session = AppRecordingSession.objects.get(pk=pk, user=request.user)
+        stop_touch_listener(session.id)
         broadcast_stop(session.device.device_id)
+        session.steps = _seal_steps(session, list(session.steps or []))
         session.status = "interrupted"
-        session.save(update_fields=["status", "updated_at"])
+        session.save(update_fields=["steps", "status", "updated_at"])
         if session.device.locked_by_id == request.user.id:
             session.device.unlock()
         return Response({"id": session.id, "steps": session.steps})
@@ -108,23 +114,40 @@ class AppRecordingSessionViewSet(viewsets.ViewSet):
             return Response({"message": "会话不存在"}, status=status.HTTP_404_NOT_FOUND)
         if session.status != "recording":
             return Response({"message": "会话不在录制中"}, status=status.HTTP_400_BAD_REQUEST)
+        kind = request.data.get("event_type")
+        if kind in ("click", "long_press") and touch_point(request.data) is None:
+            steps = list(session.steps or [])
+            label = (request.data.get("text") or request.data.get("content_desc") or "").strip()
+            renamed = apply_control_label(steps, kind, label, request.data.get("bounds") or {})
+            if renamed is None:
+                return Response({"skipped": True})
+            session.steps = steps
+            session.save(update_fields=["steps", "updated_at"])
+            return Response(renamed)
+        if kind == "swipe" and finger_points(request.data) is None:
+            return Response({"skipped": True})
         steps = list(session.steps or [])
-        collapsing = _collapsible_input(steps, request.data)
-        order = steps[-1].get("order") if collapsing else len(steps) + 1
+        if kind == "input":
+            steps = absorb_typing_clicks(steps)
+        order = len(steps) + 1
         try:
             step = parse_ingested_event(request.data, order=order, template="")
         except ValueError:
             return Response({"message": "未知事件类型"}, status=status.HTTP_400_BAD_REQUEST)
+        if kind == "input":
+            steps, step = place_input(steps, step)
+            if step is None:
+                session.steps = steps
+                session.save(update_fields=["steps", "updated_at"])
+                return Response({"skipped": True})
+            order = step.get("order") or order
         bounds = step.get("bounds") or {}
         if bounds_complete(bounds):
             step["template"] = _template_for_step(session.device.device_id, session.id, order, bounds)
-        if collapsing:
-            step = _merge_input(steps[-1], step)
-            steps[-1] = step
-        else:
+        if kind != "input":
             steps.append(step)
         if step.get("screen"):
-            session.screen = step["screen"]
+            session.screen = merge_screen(session.screen, step["screen"])
         session.steps = steps
         session.save(update_fields=["steps", "screen", "updated_at"])
         return Response(step, status=status.HTTP_201_CREATED)
@@ -155,9 +178,11 @@ class AppRecordingSessionViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def stop(self, request, pk=None):
         session = AppRecordingSession.objects.get(pk=pk, user=request.user)
+        stop_touch_listener(session.id)
         broadcast_stop(session.device.device_id)
+        session.steps = _seal_steps(session, list(session.steps or []))
         session.status = "stopped"
-        session.save(update_fields=["status", "updated_at"])
+        session.save(update_fields=["steps", "status", "updated_at"])
         if session.device.locked_by_id == request.user.id:
             session.device.unlock()
         return Response({"id": session.id, "steps": session.steps})
@@ -165,9 +190,9 @@ class AppRecordingSessionViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def save(self, request, pk=None):
         session = AppRecordingSession.objects.get(pk=pk, user=request.user)
-        steps = request.data.get("steps", session.steps)
+        steps = _seal_steps(session, list(request.data.get("steps", session.steps) or []))
         name = request.data.get("name") or "未命名录制"
-        event_chain = {"platform": "android", "screen": session.screen, "steps": steps}
+        event_chain = event_chain_document(session.screen, steps)
         case_id = request.data.get("case_id")
         if case_id is not None:
             try:

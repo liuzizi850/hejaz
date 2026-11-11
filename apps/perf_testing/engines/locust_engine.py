@@ -19,7 +19,7 @@ import time
 from .base import BaseEngine, EngineError
 from .workspace import make_run_dir
 
-LOCUSTFILE_TEMPLATE = '''"""由 TestHub 性能测试模块自动生成，请勿手工修改。"""
+LOCUSTFILE_TEMPLATE = '''"""由 Hejaz 性能测试模块自动生成，请勿手工修改。"""
 import json
 import random
 

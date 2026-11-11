@@ -81,6 +81,9 @@ frontend/.DS_Store
 frontend/*.log
 frontend/dist/
 
+# 本地 git worktree
+.worktrees/
+
 # Docker
 Dockerfile*
 docker-compose*.yml

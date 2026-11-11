@@ -11,7 +11,12 @@ import numpy as np
 from airtest.core.cv import Template
 from django.conf import settings
 
-from apps.app_automation.recording.adb_gateway import parse_ui_dump, read_ui_dump, to_media_url
+from apps.app_automation.recording.adb_gateway import (
+    ensure_adb_on_path,
+    parse_ui_dump,
+    read_ui_dump,
+    to_media_url,
+)
 from apps.app_automation.recording.replay import ScreenRecordError, replay_event_chain
 from apps.app_automation.recording.report_pack import build_result_zip, write_report_docx
 
@@ -70,7 +75,13 @@ class EventChainRunner:
         if device is None:
             device = AdbEventDevice(execution.device.device_id, execution_id)
         chain = case.event_chain if isinstance(case.event_chain, dict) else {}
-        result = replay_event_chain(chain.get("steps") or [], case.start_screen, device)
+        result = replay_event_chain(
+            chain.get("steps") or [],
+            case.start_screen,
+            device,
+            on_step=self._report_step_progress(execution_id),
+            start_page=chain.get("start_page") or None,
+        )
         if result["start_screen_mismatch"]:
             self._publish_mismatch(execution, result.get("current_screen"), result.get("start_screen"))
             return result
@@ -97,6 +108,23 @@ class EventChainRunner:
         execution.save(update_fields=["result_bundle_path", "updated_at"])
         return result
 
+    def _report_step_progress(self, execution_id):
+        from apps.app_automation.models import AppTestExecution
+        from apps.app_automation.recording.replay import execution_progress
+        from apps.app_automation.tasks import send_execution_update
+
+        def report(done, total):
+            progress = execution_progress(done, total)
+            AppTestExecution.objects.filter(pk=execution_id).update(progress=progress)
+            send_execution_update(
+                execution_id,
+                status="running",
+                progress=progress,
+                message="正在执行 %s/%s" % (done, total),
+            )
+
+        return report
+
     def _publish_mismatch(self, execution, current_path, expected_path):
         directory = os.path.join(settings.MEDIA_ROOT, "app-automation", "results", str(execution.id))
         os.makedirs(directory, exist_ok=True)
@@ -121,6 +149,7 @@ class EventChainRunner:
 
 class AdbEventDevice:
     def __init__(self, device_id, execution_id):
+        ensure_adb_on_path()
         self.device_id = device_id
         self.execution_id = execution_id
         self._videos = []
@@ -231,6 +260,26 @@ class AdbEventDevice:
         self._last_match = found
         return found is not None
 
+    def press_back(self):
+        self._input("keyevent", "KEYCODE_BACK")
+
+    def press_home(self):
+        self._input("keyevent", "KEYCODE_HOME")
+
+    def restart_app(self, package, activity):
+        from apps.app_automation.recording.page_signature import component_name
+
+        package = (package or "").strip()
+        if not package:
+            return
+        serial = ["adb", "-s", self.device_id, "shell"]
+        subprocess.call(serial + ["am", "force-stop", package])
+        component = component_name(package, activity)
+        if component:
+            subprocess.call(serial + ["am", "start", "-n", component])
+        else:
+            subprocess.call(serial + ["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"])
+
     def click(self, node):
         x, y = self._point(node)
         self._input("tap", int(round(x)), int(round(y)))
@@ -259,6 +308,97 @@ class AdbEventDevice:
         x2 = min(max(x + dx, 1), max(width - 1, 1))
         y2 = min(max(y + dy, 1), max(height - 1, 1))
         self._input("swipe", int(round(x)), int(round(y)), int(round(x2)), int(round(y2)), 300)
+
+    def _ratio_pixel(self, ratio, size):
+        return int(min(max(round(float(ratio) * size), 1), max(size - 1, 1)))
+
+    def foreground_package(self):
+        from apps.app_automation.recording.foreground import package_from_focus
+
+        try:
+            output = subprocess.check_output(
+                ["adb", "-s", self.device_id, "shell", "dumpsys", "window"],
+                stderr=subprocess.STDOUT,
+                timeout=8,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return ""
+        return package_from_focus(output.decode("utf-8", "replace"))
+
+    def seek_label(self, label):
+        from apps.app_automation.recording.app_seek import search_for_icon
+        from apps.app_automation.recording.locator import find_by_label
+
+        def locate():
+            return find_by_label(self.find_nodes(), label)
+
+        def home():
+            self._input("keyevent", "KEYCODE_WAKEUP")
+            self._input("keyevent", "KEYCODE_HOME")
+            time.sleep(0.8)
+
+        def swipe(direction):
+            if direction == "left":
+                self.swipe_points(0.85, 0.45, 0.15, 0.45)
+            elif direction == "right":
+                self.swipe_points(0.15, 0.45, 0.85, 0.45)
+            else:
+                self.swipe_points(0.5, 0.8, 0.5, 0.25)
+            time.sleep(0.6)
+
+        return search_for_icon(locate, home, swipe)
+
+    def locate_icon(self, start_screen, x, y):
+        from apps.app_automation.recording.icon_locate import locate_icon
+
+        source = self._imread(start_screen)
+        screen = self._imread(self.screenshot("icon-locate"))
+        return locate_icon(source, screen, x, y)
+
+    def seek_icon(self, start_screen, x, y):
+        from apps.app_automation.recording.app_seek import search_for_icon
+
+        def locate():
+            return self.locate_icon(start_screen, x, y)
+
+        def home():
+            self._input("keyevent", "KEYCODE_WAKEUP")
+            self._input("keyevent", "KEYCODE_HOME")
+            time.sleep(0.8)
+
+        def swipe(direction):
+            if direction == "left":
+                self.swipe_points(0.85, 0.45, 0.15, 0.45)
+            elif direction == "right":
+                self.swipe_points(0.15, 0.45, 0.85, 0.45)
+            else:
+                self.swipe_points(0.5, 0.8, 0.5, 0.25)
+            time.sleep(0.6)
+
+        return search_for_icon(locate, home, swipe)
+
+    def tap_point(self, x, y):
+        width, height = self._screen_size()
+        self._input("tap", self._ratio_pixel(x, width), self._ratio_pixel(y, height))
+
+    def long_press_point(self, x, y, duration_ms):
+        width, height = self._screen_size()
+        duration = int(duration_ms or 0)
+        if duration <= 0:
+            duration = 1000
+        px, py = self._ratio_pixel(x, width), self._ratio_pixel(y, height)
+        self._input("swipe", px, py, px, py, duration)
+
+    def swipe_points(self, from_x, from_y, to_x, to_y):
+        width, height = self._screen_size()
+        self._input(
+            "swipe",
+            self._ratio_pixel(from_x, width),
+            self._ratio_pixel(from_y, height),
+            self._ratio_pixel(to_x, width),
+            self._ratio_pixel(to_y, height),
+            300,
+        )
 
     def input_text(self, node, text):
         self.click(node)

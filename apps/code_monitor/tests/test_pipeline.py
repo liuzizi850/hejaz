@@ -72,8 +72,68 @@ def test_success_writes_excel_and_deletes_zip(tmp_path, monkeypatch):
     from openpyxl import load_workbook
 
     sheet = load_workbook(BytesIO(task.result_file.read())).active
-    assert [cell.value for cell in sheet[1]] == ["名称", "请求方式", "请求地址", "入参", "出参", "源文件"]
+    assert [cell.value for cell in sheet[1]] == ["名称", "请求方式", "请求地址", "入参", "测试数据", "测试要点", "出参", "源文件"]
     assert sheet["C2"].value == "/api/items"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_deleted_task_stops_without_database_error(monkeypatch):
+    user = _user()
+    config = _config(user)
+    task = ScanTask.objects.create(
+        source_type=ScanTask.SOURCE_GIT,
+        git_url="https://example.com/a.git",
+        model_config=config,
+        created_by=user,
+        task_type=ScanTask.TASK_REQUIREMENT_REVIEW,
+        requirement_text="用户可以登录",
+    )
+    monkeypatch.setattr("apps.code_monitor.pipeline._fill_root", lambda *args, **kwargs: None)
+
+    def fake_review(config, root, requirement, on_progress):
+        ScanTask.objects.filter(pk=task.id).delete()
+        on_progress(10)
+        raise AssertionError("检查应在任务删除后停止")
+
+    monkeypatch.setattr("apps.code_monitor.review.review_repository", fake_review)
+    execute_scan(task.id)
+    assert not ScanTask.objects.filter(pk=task.id).exists()
+
+
+def test_progress_save_mismatch_does_not_fail_existing_task(monkeypatch):
+    from django.db.utils import DatabaseError
+
+    from apps.code_monitor.review import ReviewReport
+
+    user = _user()
+    config = _config(user)
+    task = ScanTask.objects.create(
+        source_type=ScanTask.SOURCE_GIT,
+        git_url="https://example.com/a.git",
+        model_config=config,
+        created_by=user,
+        task_type=ScanTask.TASK_REQUIREMENT_REVIEW,
+        requirement_text="用户可以登录",
+    )
+    monkeypatch.setattr("apps.code_monitor.pipeline._fill_root", lambda *args, **kwargs: None)
+    real_save = ScanTask.save
+
+    def flaky_save(self, *args, **kwargs):
+        if kwargs.get("update_fields") == ["progress", "updated_at"]:
+            raise DatabaseError("Save with update_fields did not affect any rows.")
+        return real_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(ScanTask, "save", flaky_save)
+
+    def fake_review(config, root, requirement, on_progress):
+        on_progress(10)
+        return ReviewReport(requirement=requirement, findings=[])
+
+    monkeypatch.setattr("apps.code_monitor.review.review_repository", fake_review)
+    execute_scan(task.id)
+    task.refresh_from_db()
+    assert task.status == ScanTask.STATUS_SUCCEEDED
+    assert "did not affect any rows" not in task.error_message
 
 
 def test_no_candidate_fails_without_excel():
@@ -91,7 +151,7 @@ def test_no_candidate_fails_without_excel():
     execute_scan(task.id)
     task.refresh_from_db()
     assert task.status == ScanTask.STATUS_FAILED
-    assert task.error_message == "没有找到像接口定义的文件"
+    assert task.error_message == "没有找到前端、Flutter 或 iOS 接口文件"
     assert not task.result_file
 
 
@@ -270,6 +330,7 @@ def test_celery_task_reads_token_from_cache_then_deletes_it(monkeypatch):
     task.refresh_from_db()
     assert task.celery_task_id
     assert run_code_monitor_scan.run.__code__.co_varnames[:2] == ("self", "task_id")
+    assert run_code_monitor_scan.ignore_result is True
 
 
 def test_unzip_other_exit_includes_code_and_redacts_stderr(monkeypatch):

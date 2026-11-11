@@ -80,7 +80,7 @@ export default {
     },
 
     // Title
-    title: 'TestHub Testing Platform',
+    title: 'Hejaz Testing Platform',
     subtitle: 'All-in-One Intelligent Testing Solution',
 
     // Cards
@@ -116,7 +116,7 @@ export default {
     // Messages
     featureInDevelopment: 'Feature is under development......',
     mobileTipTitle: 'Please use on desktop',
-    mobileTipDesc: 'TestHub must be used in a desktop browser. Please switch to a computer to continue.',
+    mobileTipDesc: 'Hejaz must be used in a desktop browser. Please switch to a computer to continue.',
     mobileTipOk: 'Got it'
   },
   profile: {

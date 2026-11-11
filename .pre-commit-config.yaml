@@ -1,0 +1,15 @@
+repos:
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.184.0
+    hooks:
+      - id: semgrep
+        args:
+          - --config=p/default
+          - --config=p/secrets
+          - --error
+          - --skip-unknown-extensions
+          # Django 4.2 需要 Python 3.8+，3.6 的 Popen 兼容规则不适用。
+          - --exclude-rule=python.lang.compatibility.python36.python36-compatibility-Popen1
+          - --exclude-rule=python.lang.compatibility.python36.python36-compatibility-Popen2
+          # 全局限流会改变现有接口行为，不在本次提交里打开。
+          - --exclude-rule=python.django.security.audit.django-rest-framework.missing-throttle-config.missing-throttle-config

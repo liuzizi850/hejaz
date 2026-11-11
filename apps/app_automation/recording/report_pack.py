@@ -32,6 +32,46 @@ def write_report_docx(path, steps, video_names, screenrecord_error):
     return path
 
 
+def playable_video(directory):
+    """The first screenrecord often fails and leaves an empty file. Use one that has bytes."""
+    best = ""
+    best_size = 0
+    if not directory or not os.path.isdir(directory):
+        return ""
+    for name in os.listdir(directory):
+        if not name.lower().endswith(".mp4"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        if size > best_size:
+            best = path
+            best_size = size
+    return best
+
+
+def read_report_steps(path):
+    document = Document(path)
+    if not document.tables:
+        return []
+    steps = []
+    for row in document.tables[0].rows[1:]:
+        cells = [cell.text for cell in row.cells]
+        while len(cells) < 6:
+            cells.append("")
+        steps.append({
+            "order": cells[0],
+            "name": cells[1],
+            "type": cells[2],
+            "status": cells[3],
+            "screenshot": cells[4],
+            "reason": cells[5],
+        })
+    return steps
+
+
 def build_result_zip(zip_path, docx_path, screenshot_paths, video_paths):
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.write(docx_path, "report.docx")

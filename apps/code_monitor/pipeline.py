@@ -22,39 +22,99 @@ from apps.code_monitor.models import ScanTask
 from apps.code_monitor.screening import select_candidate_files
 
 
+class _TaskRemoved(Exception):
+    pass
+
+
+def _save_task(task: ScanTask, update_fields: list[str]) -> None:
+    from django.db.utils import DatabaseError
+
+    try:
+        task.save(update_fields=update_fields)
+    except DatabaseError as exc:
+        if "did not affect any rows" not in str(exc):
+            raise
+        if not ScanTask.objects.filter(pk=task.pk).exists():
+            raise _TaskRemoved() from exc
+
+
+def _delete_archive(task: ScanTask) -> None:
+    if not task.archive:
+        return
+    from django.db.utils import DatabaseError
+
+    try:
+        task.archive.delete(save=True)
+    except DatabaseError as exc:
+        if "did not affect any rows" not in str(exc):
+            raise
+        task.archive.delete(save=False)
+
+
 def execute_scan(task_id: int, token: str = "") -> None:
     task = ScanTask.objects.get(id=task_id)
     task.status = ScanTask.STATUS_RUNNING
     task.error_message = ""
     task.progress = 0
-    task.save(update_fields=["status", "error_message", "progress", "updated_at"])
+    try:
+        _save_task(task, ["status", "error_message", "progress", "updated_at"])
+    except _TaskRemoved:
+        return
     root = Path(tempfile.mkdtemp(prefix="code_monitor_"))
     try:
         _fill_root(task, root, token)
-        files = select_candidate_files(root)
-        if not files:
-            raise AcquireError("没有找到像接口定义的文件")
-        batches = split_into_batches(files, root)
-        rows = []
-        for index, batch in enumerate(batches, start=1):
-            rows.extend(call_model_with_retry(task.model_config, batch))
-            task.progress = int(index * 100 / len(batches))
-            task.save(update_fields=["progress", "updated_at"])
-        content = write_api_workbook(dedupe_rows(rows))
-        task.result_file.save(f"api-extract-{task.id}.xlsx", ContentFile(content), save=False)
-        task.status = ScanTask.STATUS_SUCCEEDED
-        task.progress = 100
-        task.error_message = ""
-        task.save(update_fields=["result_file", "status", "progress", "error_message", "updated_at"])
+        if task.task_type == ScanTask.TASK_REQUIREMENT_REVIEW:
+            _execute_requirement_review(task, root)
+        else:
+            _execute_api_extract(task, root)
+    except _TaskRemoved:
+        return
     except Exception as exc:
         task.status = ScanTask.STATUS_FAILED
         task.error_message = redact(str(exc), token)[:2000]
         task.result_file.delete(save=False)
-        task.save(update_fields=["status", "error_message", "result_file", "updated_at"])
+        try:
+            _save_task(task, ["status", "error_message", "result_file", "updated_at"])
+        except _TaskRemoved:
+            return
     finally:
         shutil.rmtree(root, ignore_errors=True)
-        if task.archive:
-            task.archive.delete(save=True)
+        _delete_archive(task)
+
+
+def _execute_api_extract(task: ScanTask, root: Path) -> None:
+    files = select_candidate_files(root)
+    if not files:
+        raise AcquireError("没有找到前端、Flutter 或 iOS 接口文件")
+    batches = split_into_batches(files, root)
+    rows = []
+    for index, batch in enumerate(batches, start=1):
+        rows.extend(call_model_with_retry(task.model_config, batch))
+        task.progress = int(index * 100 / len(batches))
+        _save_task(task, ["progress", "updated_at"])
+    content = write_api_workbook(dedupe_rows(rows))
+    task.result_file.save(f"api-extract-{task.id}.xlsx", ContentFile(content), save=False)
+    task.status = ScanTask.STATUS_SUCCEEDED
+    task.progress = 100
+    task.error_message = ""
+    _save_task(task, ["result_file", "status", "progress", "error_message", "updated_at"])
+
+
+def _execute_requirement_review(task: ScanTask, root: Path) -> None:
+    from apps.code_monitor.excel_export import write_review_workbook
+    from apps.code_monitor.review import review_repository
+
+    def on_progress(value: int) -> None:
+        task.progress = value
+        _save_task(task, ["progress", "updated_at"])
+
+    report = review_repository(task.model_config, root, task.requirement_text, on_progress)
+    content = write_review_workbook(report)
+    task.result_file.save(f"requirement-review-{task.id}.xlsx", ContentFile(content), save=False)
+    task.status = ScanTask.STATUS_SUCCEEDED
+    task.progress = 100
+    task.error_message = ""
+    _save_task(task, ["result_file", "status", "progress", "error_message", "updated_at"])
 
 
 def _fill_root(task: ScanTask, root: Path, token: str) -> None:

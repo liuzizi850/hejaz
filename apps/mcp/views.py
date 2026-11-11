@@ -150,7 +150,7 @@ class McpConnectionConfigView(APIView):
         from rest_framework.authtoken.models import Token
         token, _ = Token.objects.get_or_create(user=request.user)
         return Response({
-            'server_name': 'TestHub',
+            'server_name': 'Hejaz',
             'endpoint': request.build_absolute_uri('/api/mcp/'),
             'tool_count': catalog_summary()['total'],
             'api_key': token.key,

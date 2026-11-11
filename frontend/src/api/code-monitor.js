@@ -16,11 +16,16 @@ export function listTasks(params) {
   return request({ url: '/code-monitor/tasks/', method: 'get', params })
 }
 
+export function deleteTask(id) {
+  return request({ url: `/code-monitor/tasks/${id}/`, method: 'delete' })
+}
+
 export function createTask(formData) {
   return request({
     url: '/code-monitor/tasks/',
     method: 'post',
     data: formData,
+    timeout: 600000,
     headers: { 'Content-Type': false }
   })
 }

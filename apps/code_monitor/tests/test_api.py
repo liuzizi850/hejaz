@@ -127,6 +127,65 @@ def test_token_is_cached_not_stored(monkeypatch):
     assert "token" not in {field.name for field in task._meta.fields}
 
 
+def test_owner_can_delete_task_and_result_file():
+    client, user = _client("deleter")
+    other, _other = _client("delete-other")
+    config = _config(user)
+    task = ScanTask.objects.create(
+        source_type=ScanTask.SOURCE_ZIP,
+        model_config=config,
+        status=ScanTask.STATUS_SUCCEEDED,
+        created_by=user,
+    )
+    task.result_file.save("api-extract.xlsx", __import__("django").core.files.base.ContentFile(b"excel"), save=True)
+    stored = Path(task.result_file.path)
+    assert stored.exists()
+    assert other.delete(f"/api/code-monitor/tasks/{task.id}/").status_code == 404
+    assert stored.exists()
+    deleted = client.delete(f"/api/code-monitor/tasks/{task.id}/")
+    assert deleted.status_code == 204
+    assert not ScanTask.objects.filter(id=task.id).exists()
+    assert not stored.exists()
+
+
+def test_task_list_is_paginated_and_download_filter():
+    client, user = _client("pager")
+    config = _config(user)
+    ready = ScanTask.objects.create(
+        source_type=ScanTask.SOURCE_GIT,
+        git_url="https://example.com/ready.git",
+        model_config=config,
+        status=ScanTask.STATUS_SUCCEEDED,
+        created_by=user,
+    )
+    ready.result_file.save("ready.xlsx", __import__("django").core.files.base.ContentFile(b"excel"), save=True)
+    ScanTask.objects.create(
+        source_type=ScanTask.SOURCE_GIT,
+        git_url="https://example.com/failed.git",
+        model_config=config,
+        status=ScanTask.STATUS_FAILED,
+        created_by=user,
+    )
+    for index in range(20):
+        ScanTask.objects.create(
+            source_type=ScanTask.SOURCE_GIT,
+            git_url=f"https://example.com/{index}.git",
+            model_config=config,
+            status=ScanTask.STATUS_PENDING,
+            created_by=user,
+        )
+    listed = client.get("/api/code-monitor/tasks/", {"page_size": 20})
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["count"] == 22
+    assert len(body["results"]) == 20
+    second = client.get("/api/code-monitor/tasks/", {"page": 2, "page_size": 20})
+    assert len(second.json()["results"]) == 2
+    downloads = client.get("/api/code-monitor/tasks/", {"has_result": "1"})
+    assert downloads.json()["count"] == 1
+    assert downloads.json()["results"][0]["id"] == ready.id
+
+
 def test_download_only_owner_success_file(monkeypatch):
     client, user = _client("downloader")
     other, _other = _client("intruder")
@@ -200,3 +259,146 @@ def test_enqueue_failure_marks_task_failed_and_drops_token_and_zip(monkeypatch):
     assert "token" not in {field.name for field in task._meta.fields}
     assert not task.archive
     assert caches["code_monitor"].get(token_cache_key(task.id)) is None
+
+
+def test_enqueue_failure_returns_when_token_cache_is_down(monkeypatch):
+    client, user = _client("enqueue-cache-down")
+    config = _config(user)
+    cache = caches["code_monitor"]
+
+    def explode(task_id):
+        raise RuntimeError("broker down")
+
+    def delete_boom(key):
+        raise ConnectionError("Connection closed by server")
+
+    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", explode)
+    monkeypatch.setattr(cache, "delete", delete_boom)
+    archive = SimpleUploadedFile("repo.zip", b"not-a-real-zip", content_type="application/zip")
+    response = client.post("/api/code-monitor/tasks/", {
+        "archive": archive,
+        "model_config_id": config.id,
+        "token": "super-secret-token",
+    }, format="multipart")
+    assert response.status_code == 400
+    assert response.json()["detail"] == "提交扫描失败"
+    assert "super-secret-token" not in str(response.content)
+    task = ScanTask.objects.get(created_by=user)
+    assert task.status == ScanTask.STATUS_FAILED
+    assert task.error_message == "提交扫描失败"
+    assert not task.archive
+
+
+def test_requirement_review_requires_text(monkeypatch):
+    client, user = _client("review-api")
+    config = _config(user)
+    address = CodeAddress.objects.create(name="仓库", git_url="https://example.com/a.git", created_by=user)
+    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", lambda task_id: None)
+    missing = client.post("/api/code-monitor/tasks/", {
+        "address_id": address.id,
+        "model_config_id": config.id,
+        "task_type": "requirement_review",
+        "token": "super-secret-token",
+    }, format="multipart")
+    assert missing.status_code == 400
+    assert "请填写需求" in missing.content.decode()
+    assert ScanTask.objects.filter(created_by=user).count() == 0
+    long_text = "登" * 8001
+    created = client.post("/api/code-monitor/tasks/", {
+        "address_id": address.id,
+        "model_config_id": config.id,
+        "task_type": "requirement_review",
+        "requirement_text": long_text,
+        "token": "super-secret-token",
+    }, format="multipart")
+    assert created.status_code == 201
+    assert created.json()["requirement_text"] == long_text
+    created = client.post("/api/code-monitor/tasks/", {
+        "address_id": address.id,
+        "model_config_id": config.id,
+        "task_type": "requirement_review",
+        "requirement_text": "用户可以用手机号登录",
+        "token": "super-secret-token",
+    }, format="multipart")
+    assert created.status_code == 201
+    body = created.json()
+    assert body["task_type"] == "requirement_review"
+    assert body["requirement_text"] == "用户可以用手机号登录"
+    assert "super-secret-token" not in str(body)
+
+
+def test_requirement_review_accepts_uploaded_requirement_file(monkeypatch):
+    client, user = _client("review-file")
+    config = _config(user)
+    address = CodeAddress.objects.create(name="仓库", git_url="https://example.com/a.git", created_by=user)
+    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", lambda task_id: None)
+    rejected = client.post("/api/code-monitor/tasks/", {
+        "address_id": address.id,
+        "model_config_id": config.id,
+        "task_type": "requirement_review",
+        "requirement_file": SimpleUploadedFile("需求.doc", b"old-word"),
+        "token": "super-secret-token",
+    }, format="multipart")
+    assert rejected.status_code == 400
+    assert "txt" in rejected.content.decode()
+    assert ScanTask.objects.filter(created_by=user).count() == 0
+    created = client.post("/api/code-monitor/tasks/", {
+        "address_id": address.id,
+        "model_config_id": config.id,
+        "task_type": "requirement_review",
+        "requirement_text": "这段手写内容应被文件覆盖",
+        "requirement_file": SimpleUploadedFile("需求.txt", "用户可以用手机号登录".encode("utf-8")),
+        "token": "super-secret-token",
+    }, format="multipart")
+    assert created.status_code == 201
+    assert created.json()["requirement_text"] == "用户可以用手机号登录"
+    file_only = client.post("/api/code-monitor/tasks/", {
+        "address_id": address.id,
+        "model_config_id": config.id,
+        "task_type": "requirement_review",
+        "requirement_text": "   ",
+        "requirement_file": SimpleUploadedFile("需求.txt", "用户可以用邮箱登录".encode("utf-8")),
+        "token": "super-secret-token",
+    }, format="multipart")
+    assert file_only.status_code == 201
+    assert file_only.json()["requirement_text"] == "用户可以用邮箱登录"
+    long_text = "登" * 8001
+    long_file = client.post("/api/code-monitor/tasks/", {
+        "address_id": address.id,
+        "model_config_id": config.id,
+        "task_type": "requirement_review",
+        "requirement_file": SimpleUploadedFile("需求.md", long_text.encode("utf-8")),
+        "token": "super-secret-token",
+    }, format="multipart")
+    assert long_file.status_code == 201
+    assert long_file.json()["requirement_text"] == long_text
+
+
+def test_task_list_can_filter_requirement_reviews():
+    client, user = _client("review-filter")
+    config = _config(user)
+    ScanTask.objects.create(
+        source_type=ScanTask.SOURCE_GIT,
+        git_url="https://example.com/api.git",
+        model_config=config,
+        task_type=ScanTask.TASK_API_EXTRACT,
+        created_by=user,
+    )
+    review = ScanTask.objects.create(
+        source_type=ScanTask.SOURCE_GIT,
+        git_url="https://example.com/review.git",
+        model_config=config,
+        task_type=ScanTask.TASK_REQUIREMENT_REVIEW,
+        requirement_text="用户可以用手机号登录",
+        status=ScanTask.STATUS_SUCCEEDED,
+        created_by=user,
+    )
+    review.result_file.save("requirement-review.xlsx", __import__("django").core.files.base.ContentFile(b"excel"), save=True)
+    listed = client.get("/api/code-monitor/tasks/", {"task_type": "requirement_review"})
+    assert listed.json()["count"] == 1
+    assert listed.json()["results"][0]["id"] == review.id
+    downloads = client.get("/api/code-monitor/tasks/", {"task_type": "api_extract", "has_result": "1"})
+    assert downloads.json()["count"] == 0
+    allowed = client.get(f"/api/code-monitor/tasks/{review.id}/download/")
+    assert allowed.status_code == 200
+    assert f"requirement-review-{review.id}.xlsx" in allowed["Content-Disposition"]
