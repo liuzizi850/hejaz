@@ -110,6 +110,17 @@ def get_share(token: str) -> AiRunShare:
     return AiRunShare.objects.select_related("execution").get(token=token)
 
 
+
+def report_html_url(run) -> str:
+    """In-page HTML report URL. Token is in the path so relative screenshot srcs keep it."""
+    return f"/api/app-automation/ai-runs/runs/{run.id}/report/{run.view_token}/"
+
+
+def report_asset_url(run, relpath: str) -> str:
+    rel = (relpath or "").replace("\\", "/").lstrip("/")
+    return report_html_url(run) + rel
+
+
 def share_url_path(token: str) -> str:
     return f"/ai-run-share/{token}"
 

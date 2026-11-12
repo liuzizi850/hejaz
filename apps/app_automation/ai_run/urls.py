@@ -11,10 +11,16 @@ urlpatterns = [
     path("runs/<int:run_id>/", views.AiRunDetailView.as_view(), name="ai-run-detail"),
     path("runs/<int:run_id>/download/", views.AiRunDownloadView.as_view(), name="ai-run-download"),
     path("runs/<int:run_id>/share/", views.AiRunShareCreateView.as_view(), name="ai-run-share-create"),
+    # Path-token report URLs (same style as share): relative screenshot srcs inherit the token segment.
     re_path(
-        r"^runs/(?P<run_id>\d+)/report/(?P<file_path>.*)$",
+        r"^runs/(?P<run_id>\d+)/report/(?P<view_token>[A-Za-z0-9_\-]+)/(?P<file_path>.*)$",
         views.AiRunReportView.as_view(),
-        name="ai-run-report-file",
+        name="ai-run-report-token-file",
+    ),
+    path(
+        "runs/<int:run_id>/report/<str:view_token>/",
+        views.AiRunReportView.as_view(),
+        name="ai-run-report-token",
     ),
     path("runs/<int:run_id>/report/", views.AiRunReportView.as_view(), name="ai-run-report"),
     re_path(

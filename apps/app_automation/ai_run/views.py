@@ -29,6 +29,7 @@ from .reports import (
     file_response,
     get_share,
     http_error,
+    report_html_url,
     resolve_report_asset,
     share_url_path,
     zip_response,
@@ -133,14 +134,7 @@ class AiRunDetailView(APIView):
         run = _owned_run(request.user, run_id)
         data = AiRunExecutionSerializer(run).data
         if run.view_token:
-            data["report_html_url"] = f"/api/app-automation/ai-runs/runs/{run.id}/report/?access={run.view_token}"
-            # Rewrite screenshot URLs so <img> tags work without an Authorization header.
-            for case in data.get("cases") or []:
-                shots = []
-                for url in case.get("screenshots") or []:
-                    sep = "&" if "?" in url else "?"
-                    shots.append(f"{url}{sep}access={run.view_token}")
-                case["screenshots"] = shots
+            data["report_html_url"] = report_html_url(run)
         return Response({"success": True, "run": data})
 
 
@@ -154,10 +148,10 @@ class AiRunReportView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []  # token or DRF session is applied manually to avoid login redirects
 
-    def get(self, request, run_id, file_path=""):
-        run = _run_for_report_access(request, run_id)
+    def get(self, request, run_id, view_token=None, file_path=""):
+        run, relpath = _run_for_report_access(request, run_id, view_token=view_token, file_path=file_path)
         try:
-            asset = resolve_report_asset(run, file_path)
+            asset = resolve_report_asset(run, relpath)
             return file_response(asset)
         except Exception as exc:
             return http_error(exc)
@@ -217,27 +211,31 @@ def _owned_run(user, run_id) -> AiRunExecution:
         raise Http404(RUN_NOT_FOUND)
 
 
-def _run_for_report_access(request, run_id) -> AiRunExecution:
-    access = (request.query_params.get("access") or "").strip()
+def _run_for_report_access(request, run_id, view_token=None, file_path=""):
+    """Return (run, relative_asset_path). Path tokens authorize relative screenshot fetches."""
     try:
         run = AiRunExecution.objects.get(id=run_id)
     except (AiRunExecution.DoesNotExist, ValueError, TypeError):
         raise Http404(RUN_NOT_FOUND)
-    if access and access == run.view_token:
-        return run
-    # Fall back to a logged-in owner (used by API tests and authenticated fetches).
-    from rest_framework_simplejwt.authentication import JWTAuthentication
-    from rest_framework.authentication import SessionAuthentication, TokenAuthentication
+    token = (view_token or "").strip()
+    if token and token == run.view_token:
+        return run, file_path or ""
+    if _is_report_owner(request, run):
+        # JWT owners may still hit /report/<file> without a path token.
+        rel = "/".join(part for part in (token, file_path) if part) if token else (file_path or "")
+        return run, rel
+    raise Http404(RUN_NOT_FOUND)
 
-    user = None
+
+def _is_report_owner(request, run) -> bool:
+    from rest_framework.authentication import SessionAuthentication, TokenAuthentication
+    from rest_framework_simplejwt.authentication import JWTAuthentication
+
     for cls in (JWTAuthentication, TokenAuthentication, SessionAuthentication):
         try:
             result = cls().authenticate(request)
         except Exception:
             result = None
-        if result:
-            user = result[0]
-            break
-    if user and user.is_authenticated and run.user_id == user.id:
-        return run
-    raise Http404(RUN_NOT_FOUND)
+        if result and result[0] and result[0].is_authenticated and run.user_id == result[0].id:
+            return True
+    return False

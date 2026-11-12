@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from io import BytesIO
+from urllib.parse import urljoin
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from zipfile import ZipFile
@@ -312,7 +314,11 @@ def test_create_run_dispatches_and_completes_with_s3_failure(online_device, work
     assert cases["REQ-001-S3"]["screenshots"]
     assert cases["REQ-001-S1"]["status"] == "pass"
 
-    html = client.get(run["report_html_url"])
+    html_url = run["report_html_url"]
+    assert html_url.endswith("/")
+    assert "access=" not in html_url
+    assert f"/report/{AiRunExecution.objects.get(id=run_id).view_token}/" in html_url
+    html = client.get(html_url)
     assert html.status_code == 200
     content = _body(html)
     assert "REQ-001-S3" in content
@@ -378,3 +384,77 @@ def test_share_and_download_require_completed_report(online_device, workers_read
     run = AiRunExecution.objects.create(user=user, serial=online_device, status=AiRunExecution.STATUS_FAILED)
     assert client.get(f"{BASE}/runs/{run.id}/download/").status_code == 404
     assert client.post(f"{BASE}/runs/{run.id}/share/").status_code == 400
+
+
+def test_unauthenticated_relative_screenshot_from_html(online_device, workers_ready, monkeypatch):
+    """Without Authorization, a client can fetch a screenshot via the relative img src in index.html."""
+    client, _user = _auth()
+
+    def fake_adapter(serial, paths, output_dir):
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        shot = output_dir / "work.png"
+        shot.write_bytes(b"\x89PNG\r\n\x1a\n" + b"2" * 16)
+        cases = [
+            CaseResult("REQ-001-S1", "open app", "pass", screenshots=[str(shot)]),
+        ]
+        report = RunReport(
+            run_id="shot-test",
+            device_serial=serial,
+            app_package="com.example",
+            app_source="preinstalled_calculator",
+            cases=cases,
+        )
+        index = write_report(report, output_dir)
+        rels = [p.relative_to(output_dir).as_posix() for p in (output_dir / "screenshots").rglob("*.png")]
+        public = [CaseResult("REQ-001-S1", "open app", "pass", screenshots=rels)]
+        return RunSelectedResult(
+            ok=True,
+            message="",
+            report_dir=output_dir,
+            report_index=index,
+            run_id="shot-test",
+            device_serial=serial,
+            app_package="com.example",
+            cases=public,
+        )
+
+    monkeypatch.setattr("apps.app_automation.ai_run.execution._call_adapter", fake_adapter)
+    created = client.post(
+        f"{BASE}/runs/",
+        {"serial": online_device, "script_ids": ["builtin:REQ-001-S1_open_app"]},
+        format="json",
+    )
+    assert created.status_code == 201, created.content
+    run_id = created.json()["run"]["id"]
+    html_url = client.get(f"{BASE}/runs/{run_id}/").json()["run"]["report_html_url"]
+    assert html_url.endswith("/")
+    assert "access=" not in html_url
+    assert "/report/" in html_url
+
+    anon = _anon()
+    anon.credentials()  # clear any default auth headers
+    assert "HTTP_AUTHORIZATION" not in anon._credentials
+    html = anon.get(html_url)
+    assert html.status_code == 200
+    content = _body(html)
+    srcs = re.findall(r'<img[^>]+src="([^"]+)"', content)
+    assert srcs, "expected at least one <img> in the hosted HTML report"
+    rel = srcs[0]
+    assert "access=" not in rel
+    assert not rel.startswith("/")
+    assert "://" not in rel
+
+    shot_url = urljoin(html_url, rel)
+    assert "access=" not in shot_url
+    assert "/report/" in shot_url
+    shot = anon.get(shot_url)
+    assert shot.status_code == 200
+    body = b"".join(shot.streaming_content) if hasattr(shot, "streaming_content") else shot.content
+    assert body.startswith(b"\x89PNG")
+
+    # A forged path token must not reveal the screenshot.
+    parts = html_url.rstrip("/").split("/")
+    parts[-1] = "not-a-real-token"
+    forged = "/".join(parts) + "/" + rel
+    assert anon.get(forged).status_code in (404, 403)

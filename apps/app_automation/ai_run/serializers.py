@@ -2,7 +2,7 @@
 from rest_framework import serializers
 
 from .models import AiRunExecution, AiRunScript
-from .reports import share_url_path
+from .reports import report_asset_url, share_url_path
 
 
 class AiRunScriptSerializer(serializers.ModelSerializer):
@@ -56,14 +56,14 @@ class AiRunExecutionSerializer(serializers.ModelSerializer):
         return obj.status == AiRunExecution.STATUS_COMPLETED and bool(obj.report_relpath)
 
     def get_cases(self, obj):
-        run_id = obj.id
         cases = []
         for case in obj.case_results or []:
             shots = []
             for rel in case.get("screenshots") or []:
                 if not isinstance(rel, str) or not rel or ".." in rel or rel.startswith("/"):
                     continue
-                shots.append(f"/api/app-automation/ai-runs/runs/{run_id}/report/{rel}")
+                if obj.view_token:
+                    shots.append(report_asset_url(obj, rel))
             cases.append(
                 {
                     "id": case.get("id") or "",
