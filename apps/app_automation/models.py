@@ -832,3 +832,6 @@ class AppNotificationLog(models.Model):
 
     def get_retry_status(self):
         return f"已重试 {self.retry_count} 次" if self.is_retried else "未重试"
+
+# REQ-002 models (independent of case/suite tables)
+from .ai_run.models import AiRunExecution, AiRunScript, AiRunShare  # noqa: F401

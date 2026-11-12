@@ -577,3 +577,6 @@ def check_and_release_expired_devices():
         
     except Exception as e:
         logger.error(f"检查设备锁定失败: {str(e)}", exc_info=True)
+
+# REQ-002 async entry (not the UI Flow / Allure executor)
+from .ai_run.tasks import execute_ai_run_task  # noqa: F401

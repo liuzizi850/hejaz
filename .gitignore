@@ -97,3 +97,7 @@ build-multiplatform.sh
 # REQ-001 本地试跑产物（报告留在工作区供查看，默认不纳入版本库）
 artifacts/req001/*
 !artifacts/req001/.gitkeep
+
+# REQ-002 uploads and hosted reports (do not commit tester uploads or run artifacts)
+artifacts/req002/*
+!artifacts/req002/.gitkeep
