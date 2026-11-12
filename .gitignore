@@ -91,3 +91,7 @@ build-multiplatform.sh
 # ?? git worktree
 .worktrees/
 
+
+# REQ-001 本地试跑产物（报告留在工作区供查看，默认不纳入版本库）
+artifacts/req001/*
+!artifacts/req001/.gitkeep
