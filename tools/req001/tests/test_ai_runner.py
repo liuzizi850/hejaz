@@ -145,7 +145,12 @@ def test_max_steps_recorded_as_failure():
 
 
 def test_missing_llm_config_is_clear(monkeypatch):
-    for key in ("OPENAI_API_KEY", "REQ001_OPENAI_API_KEY", "OPENAI_MODEL", "JUDGE_MODEL", "REQ001_OPENAI_MODEL", "REQ001_LLM_MODEL"):
+    for key in (
+        "OPENAI_API_KEY", "REQ001_OPENAI_API_KEY", "OPENAI_MODEL", "JUDGE_MODEL",
+        "REQ001_OPENAI_MODEL", "REQ001_LLM_MODEL", "DASHSCOPE_API_KEY", "base_url",
+        "BASE_URL", "DASHSCOPE_BASE_URL", "OPENAI_BASE_URL", "REQ001_OPENAI_BASE_URL",
+        "COMMIT_REVIEW_MODEL", "MODEL", "REQ001_LLM_ENV_FILE",
+    ):
         monkeypatch.delenv(key, raising=False)
     with pytest.raises(LlmConfigError) as exc:
         load_llm_config(load_files=False)

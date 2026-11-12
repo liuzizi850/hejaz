@@ -14,19 +14,37 @@ from typing import Any, Callable, Dict, List, Optional
 from tools.req001.env_loader import load_local_env
 from tools.req001.errors import LlmConfigError
 
-# Names only — never log the corresponding values.
-_KEY_VARS = ("REQ001_OPENAI_API_KEY", "OPENAI_API_KEY")
-_BASE_VARS = ("REQ001_OPENAI_BASE_URL", "OPENAI_BASE_URL")
-_MODEL_VARS = ("REQ001_OPENAI_MODEL", "OPENAI_MODEL", "REQ001_LLM_MODEL", "JUDGE_MODEL")
+# Names only — never log the corresponding values. Earlier names win.
+_KEY_VARS = (
+    "DASHSCOPE_API_KEY",
+    "REQ001_OPENAI_API_KEY",
+    "OPENAI_API_KEY",
+)
+_BASE_VARS = (
+    "base_url",
+    "BASE_URL",
+    "DASHSCOPE_BASE_URL",
+    "REQ001_OPENAI_BASE_URL",
+    "OPENAI_BASE_URL",
+)
+_MODEL_VARS = (
+    "COMMIT_REVIEW_MODEL",
+    "REQ001_OPENAI_MODEL",
+    "OPENAI_MODEL",
+    "REQ001_LLM_MODEL",
+    "JUDGE_MODEL",
+    "MODEL",
+)
 
 SETUP_HINT = """未检测到可用的 LLM 配置，无法自动执行用例（不会退回人工点选）。
 
-请在本机环境变量或仓库根目录的 .env（git 已忽略，切勿提交）中配置 OpenAI 兼容接口：
-  OPENAI_API_KEY    必填
-  OPENAI_BASE_URL   可选，兼容网关或本地服务的 base URL
-  OPENAI_MODEL      可选；若未设置则尝试 JUDGE_MODEL / REQ001_OPENAI_MODEL
-
-在 worktree 中运行时，脚本也会尝试读取主工作区中的 .env，但不会复制或打印它。
+请在本机环境变量、仓库根目录的 .env，或用户级配置文件中配置 OpenAI 兼容接口。
+已识别的变量名（按优先级，值不会被打印或写入报告）：
+  API Key : DASHSCOPE_API_KEY，或 OPENAI_API_KEY / REQ001_OPENAI_API_KEY
+  base URL: base_url，或 OPENAI_BASE_URL / REQ001_OPENAI_BASE_URL
+  模型    : COMMIT_REVIEW_MODEL，或 OPENAI_MODEL / JUDGE_MODEL / REQ001_OPENAI_MODEL
+默认也会读取 C:\\Users\\EmmaLiu\\.commit-review.env（若存在）；可用 REQ001_LLM_ENV_FILE 指向其他本地文件。
+切勿把密钥提交到仓库或写进聊天、日志、报告。
 配置完成后重新运行同一条命令。
 """
 
@@ -56,11 +74,14 @@ def load_llm_config(load_files: bool = True) -> LlmConfig:
     api_key = _first_env(_KEY_VARS)
     base_url = _first_env(_BASE_VARS) or None
     model = _first_env(_MODEL_VARS)
+    # If a DashScope-compatible key is present but no model name was set, use qwen-plus.
+    if not model and api_key and os.environ.get("DASHSCOPE_API_KEY", "").strip():
+        model = "qwen-plus"
     missing = []
     if not api_key:
-        missing.append("OPENAI_API_KEY")
+        missing.append("DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
     if not model:
-        missing.append("OPENAI_MODEL 或 JUDGE_MODEL")
+        missing.append("COMMIT_REVIEW_MODEL 或 OPENAI_MODEL / JUDGE_MODEL")
     if missing:
         raise LlmConfigError("缺少 " + "、".join(missing) + "。\n" + SETUP_HINT)
     return LlmConfig(api_key=api_key, base_url=base_url, model=model)
@@ -99,7 +120,7 @@ class OpenAICompatibleClient:
         except Exception as exc:
             # Do not include the vendor exception body: some providers echo key fragments.
             name = type(exc).__name__
-            hint = "请检查 OPENAI_API_KEY 与 OPENAI_BASE_URL 是否有效且相互匹配。密钥不会被打印。"
+            hint = "请检查 API Key 与 base_url 是否有效且相互匹配。密钥不会被打印。"
             status = getattr(exc, "status_code", None)
             if name == "AuthenticationError" or status == 401:
                 raise LlmConfigError(f"调用 LLM 认证失败（{name}）。{hint}") from None
