@@ -38,8 +38,11 @@ router.register(r'scheduled-tasks', AppScheduledTaskViewSet, basename='app-sched
 router.register(r'notification-logs', AppNotificationLogViewSet, basename='app-notification-log')
 router.register(r'executions', AppTestExecutionViewSet, basename='app-execution')
 
+from .ai_run.urls import urlpatterns as ai_run_urlpatterns
+
 urlpatterns = [
     path('', include(router.urls)),
+    path('ai-runs/', include(ai_run_urlpatterns)),
     path('executions/<int:execution_id>/report/', serve_report_file, name='app-execution-report'),
     path('executions/<int:execution_id>/report/<path:file_path>', serve_report_file, name='app-execution-report-file'),
 ]
