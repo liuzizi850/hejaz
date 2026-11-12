@@ -33,6 +33,10 @@ export default {
   // 对话
   thinking: '思考中...',
   aiDisclaimer: '内容由 AI 生成，请仔细甄别',
+  sources: '知识库原文',
+  sourceUntitled: '未命名文档',
+  sourcePage: '第 {page} 页',
+  sourceEmpty: '这条引用没有可显示的原文',
 
   // 消息提示
   messages: {

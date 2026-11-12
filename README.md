@@ -19,7 +19,7 @@ TestHub 是一个 AI 驱动的全栈测试管理平台，覆盖测试全流程�
 
 ### 🤖 AI 智能化
 - **需求分析**: 上传需求文档（PDF/Word/TXT），AI 自动提取业务需求并生成测试用例
-- **智能助手**: 集成 Dify AI 助手，提供测试咨询和问题解答
+- **智能助手**: 集成 RAGFlow AI 助手，提供测试咨询和问题解答
 - **AI 智能模式**: 基于 Browser-use 的智能浏览器自动化，AI 理解页面并自动完成测试（支持文本/视觉两种模式）
 - **多模型支持**: DeepSeek、通义千问、硅基流动、OpenAI、Anthropic、Google Gemini 等
 
@@ -100,7 +100,7 @@ testhub_platform/
 │   ├── app_automation/             # APP 自动化测试
 │   ├── perf_testing/               # 性能测试
 │   ├── requirement_analysis/       # AI 需求分析
-│   ├── assistant/                  # Dify 智能助手
+│   ├── assistant/                  # RAGFlow 智能助手
 │   ├── data_factory/               # 数据工厂
 │   └── llm_judge/                  # LLM 评测
 ├── backend/                        # Django 项目配置（settings / urls / asgi）
