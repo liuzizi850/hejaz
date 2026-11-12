@@ -58,6 +58,7 @@ export default {
     executionRecords: 'Execution Records',
 
     // APP Automation
+    aiRun: 'Execution & Reports',
     deviceManagement: 'Device Management',
     packageManagement: 'Package Management',
     caseDesign: 'Case Design',

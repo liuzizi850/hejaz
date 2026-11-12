@@ -58,6 +58,7 @@ export default {
     executionRecords: '执行记录',
 
     // APP自动化
+    aiRun: '执行与报告',
     deviceManagement: '设备管理',
     packageManagement: '包名管理',
     caseDesign: '用例编排',
