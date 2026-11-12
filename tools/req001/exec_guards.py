@@ -317,7 +317,9 @@ def click_advances_expression(display: str, expression: str, label: str) -> bool
     if "=" in text:
         text = text.split("=", 1)[0]
     before = expression_progress(text, expression)
-    after = expression_progress(text + token, expression)
+    # Calculator replacement: a standalone display 0 is replaced by the next digit.
+    after_text = token if text == "0" and token.isdigit() else text + token
+    after = expression_progress(after_text, expression)
     return after > before
 
 

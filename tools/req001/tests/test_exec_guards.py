@@ -10,6 +10,7 @@ from tools.req001.ai_runner import run_scenario
 from tools.req001.bdd_parser import parse_gherkin
 from tools.req001.exec_guards import (
     RepeatClickGuard,
+    click_advances_expression,
     evaluate_calc_completion,
     extract_calc_expectation,
     hierarchy_fingerprint,
@@ -396,6 +397,21 @@ def test_repeated_digits_allowed_when_token_is_eleven():
     assert not guard.blocks(plus, label="+")
 
 
+def test_click_advances_expression_replaces_standalone_leading_zero():
+    """A calculator's initial 0 is replaced by the next digit, so 1+1 can start."""
+    assert click_advances_expression("0", "1+1", "1") is True
+    assert click_advances_expression(" 0 ", "1+1", "1") is True
+    # Existing empty-display and spin / plus rules stay the same.
+    assert click_advances_expression("", "1+1", "1") is True
+    assert click_advances_expression("1", "1+1", "1") is False
+    assert click_advances_expression("1+", "1+1", "1") is True
+    # Mid-number zeros are not a standalone leading 0.
+    assert click_advances_expression("10", "1+1", "1") is False
+    assert click_advances_expression("101", "1+1", "1") is False
+    # Intended 11 tokens are still not over-blocked.
+    assert click_advances_expression("1", "11+2", "1") is True
+
+
 def test_runner_stops_s3_same_digit_spin_and_fails_promptly(tmp_path):
     """Given-phase S3 spin: keep clicking 1 while the display grows, then still end with expected 3 / actual 2."""
     shot = tmp_path / "s.png"
@@ -459,4 +475,74 @@ def test_runner_stops_s3_same_digit_spin_and_fails_promptly(tmp_path):
     assert "实际结果为「2」" in result.failure_reason
     assert "期望看到「3」" in result.failure_reason
     assert "最大步数" not in result.failure_reason
+    assert all("wait" not in step for step in result.steps)
+
+
+def test_runner_starts_from_display_zero_then_stops_s3_spin_and_fails_promptly(tmp_path):
+    """Initial display 0 must let the first 1 through, then same-digit spin still fails promptly."""
+    shot = tmp_path / "s.png"
+    shot.write_bytes(b"png")
+    state = {"display": "0"}
+    first_one_allowed = {"value": False}
+
+    def dump():
+        return _calc_keys(state["display"]), shot, []
+
+    script = [json.dumps({"action": "click", "text": "1", "content_desc": "1", "x": 126, "y": 1960})] * 8
+    script += [
+        json.dumps({"action": "click", "content_desc": "+"}),
+        json.dumps({"action": "click", "text": "1", "content_desc": "1", "x": 126, "y": 1960}),
+        json.dumps({"action": "click", "content_desc": "="}),
+        json.dumps({"action": "wait", "seconds": 0}),
+        json.dumps({"action": "wait", "seconds": 0}),
+    ]
+    executed = []
+
+    def exec_fn(action, nodes):
+        if action["action"] == "step_done":
+            return ActionResult(ok=True, step_done=True, message="done")
+        label = action.get("text") or action.get("content_desc") or ""
+        if action["action"] == "click":
+            executed.append(label)
+            if label == "1":
+                if state["display"] in {"", "0"}:
+                    first_one_allowed["value"] = True
+                    state["display"] = "1"
+                elif state["display"] in {"1+", "1 +"}:
+                    state["display"] = "1+1"
+                else:
+                    state["display"] = state["display"] + "1"
+            elif label in {"+", '＋'}:
+                state["display"] = (state["display"] or "") + "+"
+            elif label in {"=", '＝'}:
+                state["display"] = "2"
+        target = resolve_click_target(action, nodes) if action["action"] == "click" else None
+        xy = (target.x, target.y) if target else None
+        return ActionResult(
+            ok=True,
+            message='点击「%s」(%s,%s)' % (label, xy[0] if xy else 0, xy[1] if xy else 0),
+            click_xy=xy,
+        )
+
+    result = run_scenario(
+        parse_gherkin(S3_FEATURE).scenarios[0],
+        app_package="io.dahliaos.calculator",
+        client=_client(script),
+        dump_fn=dump,
+        exec_fn=exec_fn,
+        max_steps=20,
+    )
+    # First click of 1 must be accepted while the display still shows 0.
+    assert first_one_allowed["value"] is True
+    assert executed and executed[0] == "1"
+    # Only that first 1 and the 1 after "+" should be sent; later same-key clicks are blocked.
+    assert executed.count("1") == 2
+    assert "+" in executed
+    assert "=" in executed
+    assert state["display"] == "2"
+    assert any('拒绝' in step for step in result.steps)
+    assert result.status == "fail"
+    assert '实际结果为「2」' in result.failure_reason
+    assert '期望看到「3」' in result.failure_reason
+    assert '最大步数' not in result.failure_reason
     assert all("wait" not in step for step in result.steps)
