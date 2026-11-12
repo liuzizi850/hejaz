@@ -31,6 +31,7 @@ class ActionResult:
     assertion_failed: bool = False
     step_done: bool = False
     abort: bool = False
+    click_xy: Optional[tuple] = None
 
 
 def validate_action(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -222,29 +223,19 @@ def execute_action(
         return ActionResult(ok=True, message=f"已启动 {app_package}")
 
     if name == "click":
-        if data.get("x") is not None and data.get("y") is not None:
-            x, y = int(data["x"]), int(data["y"])
-            _tap(adb, serial, x, y)
-            return ActionResult(ok=True, message=f"点击 ({x},{y})")
-        bounds = _parse_bounds_value(data.get("bounds") or data.get("xy"))
-        if bounds and len(bounds) >= 2:
-            if len(bounds) == 2:
-                x, y = bounds[0], bounds[1]
+        # Prefer widget text / content-desc / bounds over guessed x,y (see exec_guards).
+        from tools.req001.exec_guards import resolve_click_target
+
+        target = resolve_click_target(data, nodes)
+        if target is not None:
+            _tap(adb, serial, target.x, target.y)
+            label = target.label or _click_label(data)
+            if label:
+                message = f"点击「{label}」({target.x},{target.y})"
             else:
-                x = (bounds[0] + bounds[2]) // 2
-                y = (bounds[1] + bounds[3]) // 2
-            _tap(adb, serial, x, y)
-            return ActionResult(ok=True, message=f"点击 ({x},{y})")
+                message = f"点击 ({target.x},{target.y})"
+            return ActionResult(ok=True, message=message, click_xy=(target.x, target.y))
         label = _click_label(data)
-        node = _find_node(
-            nodes,
-            text=label or None,
-            resource_id=data.get("resource_id") or data.get("resource-id"),
-        )
-        if node and node.center:
-            x, y = node.center
-            _tap(adb, serial, x, y)
-            return ActionResult(ok=True, message=f"点击「{node.visible_text or node.resource_id}」({x},{y})")
         return ActionResult(
             ok=False,
             message=f"找不到可点击目标: label={label or None} resource_id={data.get('resource_id')!s}",
