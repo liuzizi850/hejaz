@@ -317,7 +317,26 @@ def resolve_target_app(
     raw_candidates = [c for c in collect_candidates(shell, lookup) if c.package not in exclude]
     ranked = rank_candidates(raw_candidates)
     notes: List[str] = []
+    fallback_meta = None
+    try:
+        apk_path_preview = Path(fallback_apk) if fallback_apk else find_fallback_apk()
+        fallback_meta = read_apk_metadata(apk_path_preview, aapt=aapt)
+    except AppFixtureError:
+        fallback_meta = None
     if ranked:
+        if fallback_meta and all(c.package == fallback_meta.package for c in ranked):
+            chosen = ranked[0]
+            notes.append(
+                f"未探测到系统预装计算器；已安装的仓库备选 APK 可用，包名 {chosen.package}（来自 APK 元数据），无需重复安装。"
+            )
+            return ResolvedApp(
+                package=chosen.package,
+                label=chosen.label or fallback_meta.label,
+                source="fallback_apk",
+                candidates=ranked,
+                apk_path=fallback_meta.path,
+                notes=notes,
+            )
         chosen = ranked[0]
         if len(ranked) > 1:
             notes.append(

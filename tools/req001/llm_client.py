@@ -97,8 +97,13 @@ class OpenAICompatibleClient:
                 temperature=temperature,
             )
         except Exception as exc:
-            # Make sure unexpected exception text does not echo a key if it was interpolated elsewhere.
-            raise LlmConfigError(f"调用 LLM 失败: {type(exc).__name__}") from exc
+            # Do not include the vendor exception body: some providers echo key fragments.
+            name = type(exc).__name__
+            hint = "请检查 OPENAI_API_KEY 与 OPENAI_BASE_URL 是否有效且相互匹配。密钥不会被打印。"
+            status = getattr(exc, "status_code", None)
+            if name == "AuthenticationError" or status == 401:
+                raise LlmConfigError(f"调用 LLM 认证失败（{name}）。{hint}") from None
+            raise LlmConfigError(f"调用 LLM 失败: {name}。{hint}") from None
         try:
             return (response.choices[0].message.content or "").strip()
         except Exception as exc:

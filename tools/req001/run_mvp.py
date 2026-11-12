@@ -86,13 +86,17 @@ def run_mvp(argv: Optional[Sequence[str]] = None) -> int:
         work = out_dir / "work" / scenario.case_id
         observer = Observer(adb=ready.adb, serial=ready.serial, work_dir=work)
         print(f"开始执行 {scenario.case_id} {scenario.name}")
-        result = run_scenario(
-            scenario,
-            app_package=app.package,
-            client=client,
-            observer=observer,
-            max_steps=args.max_steps,
-        )
+        try:
+            result = run_scenario(
+                scenario,
+                app_package=app.package,
+                client=client,
+                observer=observer,
+                max_steps=args.max_steps,
+            )
+        except LlmConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         cases.append(result)
         print(f"  结果: {result.status} {result.failure_reason}")
 
