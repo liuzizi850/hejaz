@@ -9,7 +9,6 @@ from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.http import FileResponse, Http404
-from django.views.decorators.csrf import csrf_exempt
 import logging
 import os
 
@@ -114,8 +113,175 @@ class AppTestExecutionViewSet(viewsets.ModelViewSet):
                 'message': f'停止任务失败: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=["get"], url_path="bundle-report")
+    def bundle_report(self, request, pk=None):
+        execution = self.get_object()
+        directory = os.path.dirname(execution.result_bundle_path or "")
+        docx_path = os.path.join(directory, "report.docx") if directory else ""
+        if not os.path.isfile(docx_path):
+            return Response({"message": "报告不存在"}, status=status.HTTP_404_NOT_FOUND)
+        from ..recording.adb_gateway import to_media_url
+        from ..recording.report_pack import playable_video, read_report_steps
 
-@csrf_exempt
+        steps = []
+        for row in read_report_steps(docx_path):
+            shot_name = row.get("screenshot") or ""
+            shot_path = os.path.join(directory, shot_name) if shot_name else ""
+            row["screenshot_url"] = to_media_url(shot_path) if shot_path and os.path.isfile(shot_path) else ""
+            steps.append(row)
+        video_url = to_media_url(playable_video(directory))
+        return Response({
+            "steps": steps,
+            "download_url": to_media_url(execution.result_bundle_path),
+            "video_url": video_url,
+        })
+
+    def _selected_executions(self, request):
+        raw = request.data.get("ids") if isinstance(request.data, dict) else None
+        if not isinstance(raw, list) or not raw:
+            return None, Response({"message": "请选择执行记录"}, status=status.HTTP_400_BAD_REQUEST)
+        ids = []
+        for item in raw:
+            try:
+                ids.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        ids = list(dict.fromkeys(ids))[:30]
+        if not ids:
+            return None, Response({"message": "请选择执行记录"}, status=status.HTTP_400_BAD_REQUEST)
+        found = {item.id: item for item in self.get_queryset().filter(id__in=ids)}
+        ordered = [found[item] for item in ids if item in found]
+        if not ordered:
+            return None, Response({"message": "执行记录不存在"}, status=status.HTTP_404_NOT_FOUND)
+        return ordered, None
+
+    def _delete_blocked(self, executions):
+        if any(item.status in ("pending", "running") for item in executions):
+            return Response({"message": "执行中的记录不能删除"}, status=status.HTTP_400_BAD_REQUEST)
+        return None
+
+    def _remove_execution_files(self, execution):
+        import shutil
+        from django.conf import settings
+
+        root = os.path.abspath(settings.MEDIA_ROOT)
+        targets = [os.path.join(root, "app-automation", "results", str(execution.id))]
+        report = os.path.abspath(execution.report_path) if execution.report_path else ""
+        if report.startswith(root + os.sep):
+            targets.append(report)
+        for path in targets:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+
+    def destroy(self, request, *args, **kwargs):
+        execution = self.get_object()
+        blocked = self._delete_blocked([execution])
+        if blocked is not None:
+            return blocked
+        self._remove_execution_files(execution)
+        execution.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=["post"], url_path="batch-delete")
+    def batch_delete(self, request):
+        executions, error = self._selected_executions(request)
+        if error is not None:
+            return error
+        blocked = self._delete_blocked(executions)
+        if blocked is not None:
+            return blocked
+        for execution in executions:
+            self._remove_execution_files(execution)
+        deleted = AppTestExecution.objects.filter(id__in=[item.id for item in executions]).delete()[0]
+        return Response({"deleted": deleted})
+
+    def _report_records(self, executions):
+        from ..recording.report_pack import read_report_steps
+
+        step_text = {"passed": "通过", "failed": "失败"}
+        result_text = {"passed": "通过", "failed": "失败", "skipped": "跳过"}
+        records = []
+        for execution in executions:
+            case_name = execution.test_case.name if execution.test_case_id and execution.test_case else ""
+            directory = os.path.dirname(execution.result_bundle_path or "")
+            docx_path = os.path.join(directory, "report.docx") if directory else ""
+            steps = []
+            if os.path.isfile(docx_path):
+                for row in read_report_steps(docx_path):
+                    shot_name = row.get("screenshot") or ""
+                    shot_path = os.path.join(directory, shot_name) if shot_name else ""
+                    steps.append({
+                        "order": row.get("order") or "",
+                        "name": row.get("name") or "",
+                        "status": step_text.get(row.get("status") or "", row.get("status") or ""),
+                        "reason": row.get("reason") or "",
+                        "image_path": shot_path if shot_path and os.path.isfile(shot_path) else "",
+                    })
+            records.append({
+                "id": execution.id,
+                "case_name": case_name,
+                "result": result_text.get(execution.result or "", execution.result or ""),
+                "error": execution.error_message or "",
+                "steps": steps,
+            })
+        return records
+
+    def _file_response(self, path, filename, content_type):
+        response = FileResponse(open(path, "rb"), as_attachment=True, filename=filename, content_type=content_type)
+        response._cleanup_path = path
+        original_close = response.close
+
+        def close():
+            original_close()
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+        response.close = close
+        return response
+
+    @action(detail=False, methods=["post"], url_path="batch-download")
+    def batch_download(self, request):
+        import tempfile
+        from ..recording.report_export import pack_report_files, safe_download_name
+
+        executions, error = self._selected_executions(request)
+        if error is not None:
+            return error
+        files = []
+        notes = []
+        for execution in executions:
+            case_name = execution.test_case.name if execution.test_case_id and execution.test_case else "报告"
+            base = "%s-%s" % (execution.id, safe_download_name(case_name))
+            bundle = execution.result_bundle_path or ""
+            if os.path.isfile(bundle):
+                files.append((base + ".zip", bundle))
+            else:
+                notes.append((base + ".txt", execution.error_message or "这份执行没有报告文件"))
+        fd, destination = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
+        pack_report_files(destination, files, notes)
+        return self._file_response(destination, "执行报告.zip", "application/zip")
+
+    @action(detail=False, methods=["post"], url_path="batch-export")
+    def batch_export(self, request):
+        import tempfile
+        from ..recording.report_export import export_executions_xlsx
+
+        executions, error = self._selected_executions(request)
+        if error is not None:
+            return error
+        fd, destination = tempfile.mkstemp(suffix=".xlsx")
+        os.close(fd)
+        export_executions_xlsx(destination, self._report_records(executions))
+        return self._file_response(
+            destination,
+            "执行报告.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+
 def serve_report_file(request, execution_id, file_path=''):
     """提供 Allure 报告文件访问"""
     try:

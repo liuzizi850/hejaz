@@ -232,7 +232,7 @@ def _render(execution, samples, stats):
     {sla_html}
   </div>
 
-  <footer>TestHub 性能测试平台 · 生成于 {timezone.localtime().strftime(fmt)}</footer>
+  <footer>Hejaz 性能测试平台 · 生成于 {timezone.localtime().strftime(fmt)}</footer>
 </div>
 
 <script src="{ECHARTS_CDN}"></script>

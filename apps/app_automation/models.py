@@ -508,6 +508,8 @@ class AppTestCase(models.Model):
         verbose_name='应用包名'
     )
     ui_flow = models.JSONField(default=dict, verbose_name='UI流程定义', help_text='UI Flow JSON配置')
+    event_chain = models.JSONField(default=dict, blank=True, verbose_name='事件链')
+    start_screen = models.CharField(max_length=500, blank=True, default='', verbose_name='开始界面截图')
     variables = models.JSONField(default=list, verbose_name='变量定义', help_text='测试变量列表')
     
     # 用例配置
@@ -610,7 +612,14 @@ class AppTestExecution(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name='结束时间')
     duration = models.FloatField(default=0, verbose_name='执行时长(秒)')
     report_path = models.CharField(max_length=500, blank=True, default='', verbose_name='Allure报告路径')
+    result_bundle_path = models.CharField(max_length=500, blank=True, default='', verbose_name='事件链结果包路径')
     error_message = models.TextField(blank=True, default='', verbose_name='错误信息')
+    mismatch_current_url = models.CharField(
+        max_length=500, null=True, blank=True, default='', verbose_name='不匹配当前界面'
+    )
+    mismatch_expected_url = models.CharField(
+        max_length=500, null=True, blank=True, default='', verbose_name='不匹配开始界面'
+    )
     
     # 执行结果统计
     total_steps = models.IntegerField(default=0, verbose_name='总步骤数')
@@ -654,6 +663,27 @@ class AppTestExecution(models.Model):
         if self.total_steps == 0:
             return 0
         return round((self.passed_steps / self.total_steps) * 100, 2)
+
+
+class AppRecordingSession(models.Model):
+    """一次 Android 录制会话"""
+    STATUS_CHOICES = [
+        ('recording', '录制中'),
+        ('interrupted', '已中断'),
+        ('stopped', '已停止'),
+    ]
+    device = models.ForeignKey(AppDevice, on_delete=models.CASCADE, related_name='recording_sessions')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='app_recording_sessions')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='recording')
+    steps = models.JSONField(default=list, blank=True)
+    start_screen = models.CharField(max_length=500, blank=True, default='')
+    screen = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'app_recording_sessions'
+        ordering = ['-created_at']
 
 
 class AppScheduledTask(models.Model):

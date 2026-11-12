@@ -205,11 +205,14 @@ def execute_app_test_task(execution_id, package_name: str = None, scheduled_task
     
     execution = None
     device = None
+    use_event_chain = False
     
     try:
         # 获取执行记录
         execution = AppTestExecution.objects.get(id=execution_id)
         test_case = execution.test_case
+        from .recording.dispatch import execution_kind
+        use_event_chain = execution_kind(test_case) == "event_chain"
         
         device = execution.device
         
@@ -242,29 +245,41 @@ def execute_app_test_task(execution_id, package_name: str = None, scheduled_task
         else:
             final_package_name = test_case.app_package.package_name if test_case.app_package else ""
 
-        executor = AppTestExecutor()
-        report_result = executor.run_tests(
-            test_case_id=test_case.id,
-            device_id=device.device_id,
-            package_name=final_package_name,
-            execution_id=execution_id,
-            username=execution.user.username if execution.user else 'unknown',
-        )
-        
-        # 从数据库重新读取最新进度（子进程中的回调可能已经更新过）
-        execution.refresh_from_db()
-        
-        if report_result.get('report_path'):
-            execution.report_path = report_result['report_path']
-            logger.info(f"报告已生成: {report_result['report_path']}")
-        
-        test_results = report_result.get('test_results', {})
-        execution.total_steps = test_results.get('total', 0)
-        execution.passed_steps = test_results.get('passed', 0)
-        # parser 已将 broken 算在 failed 里，直接使用
-        execution.failed_steps = test_results.get('failed', 0)
-        if test_results.get('broken', 0):
-            logger.info(f"检测到 broken 用例 {test_results.get('broken')} 个（已计入失败统计）。")
+        if use_event_chain:
+            from .runners.event_chain_runner import EventChainRunner
+            report_result = EventChainRunner().run(execution.id)
+            execution.refresh_from_db()
+            execution.result_bundle_path = report_result.get("result_bundle_path") or ""
+            execution.total_steps = len(report_result.get("steps") or [])
+            execution.passed_steps = len([step for step in report_result.get("steps") or [] if step["status"] == "passed"])
+            execution.failed_steps = len([step for step in report_result.get("steps") or [] if step["status"] == "failed"])
+            if report_result.get("start_screen_mismatch"):
+                execution.failed_steps = 1
+                execution.total_steps = max(execution.total_steps, 1)
+        else:
+            executor = AppTestExecutor()
+            report_result = executor.run_tests(
+                test_case_id=test_case.id,
+                device_id=device.device_id,
+                package_name=final_package_name,
+                execution_id=execution_id,
+                username=execution.user.username if execution.user else 'unknown',
+            )
+
+            # 从数据库重新读取最新进度（子进程中的回调可能已经更新过）
+            execution.refresh_from_db()
+
+            if report_result.get('report_path'):
+                execution.report_path = report_result['report_path']
+                logger.info(f"报告已生成: {report_result['report_path']}")
+
+            test_results = report_result.get('test_results', {})
+            execution.total_steps = test_results.get('total', 0)
+            execution.passed_steps = test_results.get('passed', 0)
+            # parser 已将 broken 算在 failed 里，直接使用
+            execution.failed_steps = test_results.get('failed', 0)
+            if test_results.get('broken', 0):
+                logger.info(f"检测到 broken 用例 {test_results.get('broken')} 个（已计入失败统计）。")
         
         execution.progress = 95
         execution.save()
@@ -339,12 +354,13 @@ def execute_app_test_task(execution_id, package_name: str = None, scheduled_task
                 result=None,
             )
             
-            # 尝试生成报告
-            try:
-                executor = AppTestExecutor()
-                executor._generate_allure_report(execution_id=execution_id)
-            except Exception:
-                pass
+            # 事件链结果在回放时已经打包，不再生成 Allure 报告
+            if not use_event_chain:
+                try:
+                    executor = AppTestExecutor()
+                    executor._generate_allure_report(execution_id=execution_id)
+                except Exception:
+                    pass
     finally:
         # 7. 清理：释放设备
         try:
@@ -396,6 +412,7 @@ def execute_app_suite_task(suite_id, execution_ids, package_name=None, scheduled
         if device.status != 'locked':
             device.lock(user)
         logger.info(f"套件执行开始: {suite.name}, 设备: {device.device_id}, 共 {len(executions)} 个用例")
+        from .recording.dispatch import execution_kind
 
         for idx, execution in enumerate(executions):
             test_case = execution.test_case
@@ -432,26 +449,38 @@ def execute_app_suite_task(suite_id, execution_ids, package_name=None, scheduled
                     message='正在准备测试环境'
                 )
 
-                executor = AppTestExecutor()
-                report_result = executor.run_tests(
-                    test_case_id=test_case.id,
-                    device_id=device.device_id,
-                    package_name=final_pkg,
-                    execution_id=execution.id,
-                    username=execution.user.username if execution.user else 'unknown',
-                )
+                if execution_kind(test_case) == "event_chain":
+                    from .runners.event_chain_runner import EventChainRunner
+                    report_result = EventChainRunner().run(execution.id)
+                    execution.refresh_from_db()
+                    execution.result_bundle_path = report_result.get("result_bundle_path") or ""
+                    execution.total_steps = len(report_result.get("steps") or [])
+                    execution.passed_steps = len([step for step in report_result.get("steps") or [] if step["status"] == "passed"])
+                    execution.failed_steps = len([step for step in report_result.get("steps") or [] if step["status"] == "failed"])
+                    if report_result.get("start_screen_mismatch"):
+                        execution.failed_steps = 1
+                        execution.total_steps = max(execution.total_steps, 1)
+                else:
+                    executor = AppTestExecutor()
+                    report_result = executor.run_tests(
+                        test_case_id=test_case.id,
+                        device_id=device.device_id,
+                        package_name=final_pkg,
+                        execution_id=execution.id,
+                        username=execution.user.username if execution.user else 'unknown',
+                    )
 
-                execution.refresh_from_db()
+                    execution.refresh_from_db()
 
-                if report_result.get('report_path'):
-                    execution.report_path = report_result['report_path']
+                    if report_result.get('report_path'):
+                        execution.report_path = report_result['report_path']
 
-                test_results = report_result.get('test_results', {})
-                execution.total_steps = test_results.get('total', 0)
-                execution.passed_steps = test_results.get('passed', 0)
-                execution.failed_steps = test_results.get('failed', 0)
-                if test_results.get('broken', 0):
-                    logger.info(f"检测到 broken 用例 {test_results.get('broken')} 个（已计入失败统计）。")
+                    test_results = report_result.get('test_results', {})
+                    execution.total_steps = test_results.get('total', 0)
+                    execution.passed_steps = test_results.get('passed', 0)
+                    execution.failed_steps = test_results.get('failed', 0)
+                    if test_results.get('broken', 0):
+                        logger.info(f"检测到 broken 用例 {test_results.get('broken')} 个（已计入失败统计）。")
 
                 execution.status = 'completed'
                 if execution.total_steps == 0:

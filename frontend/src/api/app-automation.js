@@ -74,6 +74,58 @@ export function getDeviceList(params) {
 }
 
 /**
+ * 录制页使用的设备列表。与 getDeviceList 同一接口。
+ */
+export function getAppDevices(params) {
+  return getDeviceList(params)
+}
+
+export function createRecordingSession(data) {
+  return request({
+    url: '/app-automation/recording-sessions/',
+    method: 'post',
+    data
+  })
+}
+
+export function getRecordingScreenTree(sessionId) {
+  return request({
+    url: `/app-automation/recording-sessions/${sessionId}/screen-tree/`,
+    method: 'get'
+  })
+}
+
+export function postRecordingAssertion(sessionId, data) {
+  return request({
+    url: `/app-automation/recording-sessions/${sessionId}/assertions/`,
+    method: 'post',
+    data
+  })
+}
+
+export function stopRecordingSession(sessionId) {
+  return request({
+    url: `/app-automation/recording-sessions/${sessionId}/stop/`,
+    method: 'post'
+  })
+}
+
+export function interruptRecordingSession(sessionId) {
+  return request({
+    url: `/app-automation/recording-sessions/${sessionId}/interrupt/`,
+    method: 'post'
+  })
+}
+
+export function saveRecordingSession(sessionId, data) {
+  return request({
+    url: `/app-automation/recording-sessions/${sessionId}/save/`,
+    method: 'post',
+    data
+  })
+}
+
+/**
  * 获取设备截图
  */
 export function captureDeviceScreenshot(id) {
@@ -381,6 +433,54 @@ export function getExecutionDetail(id) {
   })
 }
 
+export function getExecutionBundle(id) {
+  return request({
+    url: `/app-automation/executions/${id}/bundle-report/`,
+    method: 'get'
+  })
+}
+
+export function batchDownloadExecutions(ids) {
+  return request({
+    url: '/app-automation/executions/batch-download/',
+    method: 'post',
+    data: { ids },
+    responseType: 'blob'
+  })
+}
+
+export function batchExportExecutions(ids) {
+  return request({
+    url: '/app-automation/executions/batch-export/',
+    method: 'post',
+    data: { ids },
+    responseType: 'blob'
+  })
+}
+
+export async function saveBlobResponse(response, fallbackName) {
+  const blob = response.data
+  if (blob && blob.type && blob.type.includes('json')) {
+    const text = await blob.text()
+    let message = '导出失败'
+    try {
+      message = JSON.parse(text).message || message
+    } catch (error) {
+      message = text || message
+    }
+    throw new Error(message)
+  }
+  const disposition = response.headers['content-disposition'] || ''
+  const matched = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)/i.exec(disposition)
+  const filename = matched ? decodeURIComponent(matched[1] || matched[2]) : fallbackName
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  window.URL.revokeObjectURL(url)
+}
+
 /**
  * 检查 WebSocket 是否可用
  */
@@ -398,6 +498,14 @@ export function deleteExecution(id) {
   return request({
     url: `/app-automation/executions/${id}/`,
     method: 'delete'
+  })
+}
+
+export function batchDeleteExecutions(ids) {
+  return request({
+    url: '/app-automation/executions/batch-delete/',
+    method: 'post',
+    data: { ids }
   })
 }
 

@@ -92,9 +92,9 @@ def get_mcp():
         # 对 Daphne 多 worker 与反向代理部署最稳；JSON-RPC 语义不变。
         # transport_security：Host 白名单，不配会被 SDK 默认防护拒为 421
         mcp = FastMCP(
-            'TestHub',
+            'Hejaz',
             instructions=(
-                'TestHub AI 测试平台 MCP Server。读工具（list_*/get_*/search_*）即时返回；'
+                'Hejaz AI 测试平台 MCP Server。读工具（list_*/get_*/search_*）即时返回；'
                 '危险工具需先调用 preview_* 获取 confirm_token，再调用对应 confirm_* 确认执行。'
                 '若平台开启了人工审批模式，confirm_* 会返回 awaiting_approval，'
                 '此时请用同一 confirm_token 轮询 get_approval_status 直至 approved/rejected/expired。'

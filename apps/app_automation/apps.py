@@ -10,6 +10,11 @@ class AppAutomationConfig(AppConfig):
     def ready(self):
         """应用启动时执行"""
         try:
+            from apps.app_automation.recording.adb_gateway import ensure_adb_on_path
+            ensure_adb_on_path()
+        except Exception:
+            pass
+        try:
             import apps.app_automation.tasks  # noqa
         except ImportError:
             pass

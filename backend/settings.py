@@ -317,7 +317,7 @@ CSRF_TRUSTED_ORIGINS = config(
 
 # Spectacular Settings
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'TestHub API',
+    'TITLE': 'Hejaz API',
     'DESCRIPTION': 'Test Case Management Platform API',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,

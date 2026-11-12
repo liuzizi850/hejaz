@@ -13,7 +13,7 @@ def test_workbook_column_order_and_values():
     sheet = load_workbook(BytesIO(content)).active
     assert [cell.value for cell in sheet[1]] == EXCEL_HEADERS
     assert [cell.value for cell in sheet[2]] == [
-        "列表", "GET", "/api/items", "page", "id,name", "src/api/items.js",
+        "列表", "GET", "/api/items", "page", "", "", "id,name", "src/api/items.js",
     ]
 
 
@@ -22,7 +22,7 @@ def test_formula_prefixes_are_escaped():
         ApiRow("=cmd", "GET", "+url", "-in", "@out", "=src.js"),
     ])
     row = [cell.value for cell in load_workbook(BytesIO(content)).active[2]]
-    assert row == ["'=cmd", "GET", "'+url", "'-in", "'@out", "'=src.js"]
+    assert row == ["'=cmd", "GET", "'+url", "'-in", "", "", "'@out", "'=src.js"]
 
 
 def test_empty_rows_still_have_header():

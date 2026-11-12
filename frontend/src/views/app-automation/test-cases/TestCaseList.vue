@@ -164,6 +164,9 @@
         <div class="card-header">
           <span>{{ $t('appAutomation.testCase.recentExecutions') }}</span>
           <div class="card-actions">
+            <el-button link type="primary" :disabled="!selectedExecutions.length || batching || deleting" @click="batchDownload">批量下载</el-button>
+            <el-button link type="primary" :disabled="!selectedExecutions.length || batching || deleting" @click="batchExport">批量导出</el-button>
+            <el-button link type="danger" :disabled="!selectedExecutions.length || batching || deleting" @click="batchRemoveExecutions">批量删除</el-button>
             <el-button link type="primary" @click="refreshExecutions">
               {{ $t('appAutomation.common.refresh') }}
             </el-button>
@@ -177,19 +180,22 @@
       <el-table
         v-loading="executionsLoading"
         :data="executionData.results"
+        row-key="id"
         style="width: 100%"
+        @selection-change="onExecutionSelection"
       >
-        <el-table-column prop="case_name" :label="$t('appAutomation.testCase.testCaseColumn')" width="200" />
-        <el-table-column prop="device_name" :label="$t('appAutomation.testCase.device')" width="150" />
-        <el-table-column prop="user_name" :label="$t('appAutomation.testCase.tester')" width="120" />
-        <el-table-column prop="status" :label="$t('appAutomation.common.status')" width="100">
+        <el-table-column type="selection" width="46" align="center" />
+        <el-table-column prop="case_name" :label="$t('appAutomation.testCase.testCaseColumn')" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="device_name" :label="$t('appAutomation.testCase.device')" min-width="196" show-overflow-tooltip />
+        <el-table-column prop="user_name" :label="$t('appAutomation.testCase.tester')" width="96" show-overflow-tooltip />
+        <el-table-column prop="status" :label="$t('appAutomation.common.status')" width="88" align="center">
           <template #default="{ row }">
             <el-tag :type="getDisplayStatus(row.status, row.result).type" size="small">
               {{ getDisplayStatus(row.status, row.result).text }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('appAutomation.testCase.executionProgress')" width="280">
+        <el-table-column :label="$t('appAutomation.testCase.executionProgress')" min-width="160">
           <template #default="{ row }">
             <div class="progress-wrapper">
               <el-progress
@@ -197,23 +203,22 @@
                 :status="getProgressStatus(row)"
                 :stroke-width="8"
                 :show-text="false"
-                style="flex: 1"
               />
               <span class="progress-text">{{ calculateProgress(row) }}%</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="started_at" :label="$t('appAutomation.testCase.startTime')" width="180">
+        <el-table-column prop="started_at" :label="$t('appAutomation.testCase.startTime')" width="168">
           <template #default="{ row }">
             {{ formatDateTime(row.started_at) }}
           </template>
         </el-table-column>
-        <el-table-column prop="finished_at" :label="$t('appAutomation.testCase.endTime')" width="180">
+        <el-table-column prop="finished_at" :label="$t('appAutomation.testCase.endTime')" width="168">
           <template #default="{ row }">
             {{ row.finished_at ? formatDateTime(row.finished_at) : '-' }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('appAutomation.common.operation')" width="150">
+        <el-table-column :label="$t('appAutomation.common.operation')" width="148" align="center">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'completed' || row.status === 'error'"
@@ -233,10 +238,52 @@
             >
               {{ $t('appAutomation.common.stop') }}
             </el-button>
+            <el-button
+              v-if="row.status !== 'running' && row.status !== 'pending'"
+              link
+              type="danger"
+              size="small"
+              :disabled="deleting"
+              @click="removeExecution(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="reportDialogVisible" title="执行结果" width="860px">
+      <p v-if="reportError" class="report-error">{{ reportError }}</p>
+      <div v-if="reportCurrent || reportExpected" class="mismatch-shots">
+        <div v-if="reportExpected">
+          <p>开始界面</p>
+          <img :src="reportExpected" alt="开始界面" />
+        </div>
+        <div v-if="reportCurrent">
+          <p>当前界面</p>
+          <img :src="reportCurrent" alt="当前界面" />
+        </div>
+      </div>
+      <video v-if="reportVideo" class="report-video" :src="reportVideo" controls></video>
+      <el-table v-if="reportSteps.length" :data="reportSteps" max-height="420">
+        <el-table-column prop="order" label="顺序" width="70" />
+        <el-table-column prop="name" label="操作" min-width="180" />
+        <el-table-column label="结果" width="80">
+          <template #default="{ row }">{{ stepStatusText(row.status) }}</template>
+        </el-table-column>
+        <el-table-column label="截图" width="140">
+          <template #default="{ row }">
+            <img v-if="row.screenshot_url" class="report-shot" :src="row.screenshot_url" alt="" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="reason" label="说明" min-width="120" />
+      </el-table>
+      <template #footer>
+        <a v-if="reportDownload" class="report-download" :href="reportDownload" download>下载压缩包</a>
+        <el-button type="primary" @click="reportDialogVisible = false">{{ $t('appAutomation.common.close') }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -252,6 +299,12 @@ import {
   executeTestCase as apiExecuteTestCase,
   getExecutionList,
   getExecutionDetail,
+  getExecutionBundle,
+  batchDownloadExecutions,
+  batchExportExecutions,
+  deleteExecution,
+  batchDeleteExecutions,
+  saveBlobResponse,
   stopExecution as apiStopExecution,
   getPackageList,
   getAppProjects,
@@ -267,6 +320,78 @@ const { t } = useI18n()
 const loading = ref(false)
 const devicesLoading = ref(false)
 const executionsLoading = ref(false)
+const selectedExecutions = ref([])
+const batching = ref(false)
+const deleting = ref(false)
+
+const onExecutionSelection = (rows) => {
+  selectedExecutions.value = rows
+}
+
+const runBatch = async (request, fallbackName) => {
+  if (!selectedExecutions.value.length) {
+    ElMessage.warning('请选择执行记录')
+    return
+  }
+  batching.value = true
+  try {
+    const response = await request(selectedExecutions.value.map(row => row.id))
+    await saveBlobResponse(response, fallbackName)
+  } catch (error) {
+    ElMessage.error(error.message || '导出失败')
+  } finally {
+    batching.value = false
+  }
+}
+
+const batchDownload = () => runBatch(batchDownloadExecutions, '执行报告.zip')
+const batchExport = () => runBatch(batchExportExecutions, '执行报告.xlsx')
+
+const removeExecution = async (row) => {
+  try {
+    await ElMessageBox.confirm('确定删除这条执行记录吗？删除后不能恢复。', '删除', { type: 'warning' })
+  } catch {
+    return
+  }
+  deleting.value = true
+  try {
+    await deleteExecution(row.id)
+    ElMessage.success('已删除')
+    selectedExecutions.value = selectedExecutions.value.filter(item => item.id !== row.id)
+    await loadExecutions()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || error.message || '删除失败')
+  } finally {
+    deleting.value = false
+  }
+}
+
+const batchRemoveExecutions = async () => {
+  if (!selectedExecutions.value.length) {
+    ElMessage.warning('请选择执行记录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${selectedExecutions.value.length} 条执行记录吗？删除后不能恢复。`,
+      '批量删除',
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  deleting.value = true
+  try {
+    await batchDeleteExecutions(selectedExecutions.value.map(row => row.id))
+    ElMessage.success('已删除')
+    selectedExecutions.value = []
+    await loadExecutions()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || error.message || '删除失败')
+  } finally {
+    deleting.value = false
+  }
+}
 const availableDevices = ref([])
 const appPackages = ref([])
 const searchQuery = ref('')
@@ -416,13 +541,62 @@ const viewAllExecutions = () => {
   router.push({ path: '/app-automation/executions' })
 }
 
-const viewReport = (execution) => {
-  if (!execution.report_path) {
-    ElMessage.info(t('appAutomation.testCase.reportNotExist'))
+const reportDialogVisible = ref(false)
+const reportError = ref('')
+const reportCurrent = ref('')
+const reportExpected = ref('')
+const reportSteps = ref([])
+const reportVideo = ref('')
+const reportDownload = ref('')
+
+const stepStatusText = (status) => {
+  if (status === 'passed') return '通过'
+  if (status === 'failed') return '失败'
+  return status || ''
+}
+
+const bundleMediaUrl = (filePath) => {
+  if (!filePath) return ''
+  const normalized = String(filePath).replace(/\\/g, '/')
+  const marker = '/media/'
+  const index = normalized.toLowerCase().lastIndexOf(marker)
+  if (index >= 0) return normalized.slice(index)
+  const trimmed = normalized.replace(/^\/+/, '')
+  if (trimmed.toLowerCase().startsWith('media/')) return `/${trimmed}`
+  return `/media/${trimmed}`
+}
+
+const viewReport = async (execution) => {
+  reportError.value = ''
+  reportCurrent.value = ''
+  reportExpected.value = ''
+  reportSteps.value = []
+  reportVideo.value = ''
+  reportDownload.value = ''
+  try {
+    const res = await getExecutionBundle(execution.id)
+    if (res.data && Array.isArray(res.data.steps)) {
+      reportSteps.value = res.data.steps
+      reportVideo.value = res.data.video_url || ''
+      reportDownload.value = res.data.download_url || ''
+      reportDialogVisible.value = true
+      return
+    }
+  } catch (error) {
+    // 没有事件链报告时继续走下面的 Allure 或不匹配界面
+  }
+  if (execution.report_path) {
+    window.open(`/api/app-automation/executions/${execution.id}/report/`, '_blank')
     return
   }
-  const reportUrl = `/api/app-automation/executions/${execution.id}/report/`
-  window.open(reportUrl, '_blank')
+  if (execution.mismatch_current_url || execution.mismatch_expected_url || execution.error_message) {
+    reportError.value = execution.error_message || ''
+    reportCurrent.value = execution.mismatch_current_url || ''
+    reportExpected.value = execution.mismatch_expected_url || ''
+    reportDialogVisible.value = true
+    return
+  }
+  ElMessage.info(t('appAutomation.testCase.reportNotExist'))
 }
 
 // 停止测试
@@ -862,17 +1036,50 @@ onBeforeUnmount(() => {
 .progress-wrapper {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 8px;
-  background-color: #f5f7fa;
-  border-radius: 4px;
+  gap: 8px;
+  width: 100%;
+
+  :deep(.el-progress) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  :deep(.el-progress-bar) {
+    margin: 0;
+    padding-right: 0;
+  }
 
   .progress-text {
-    min-width: 45px;
+    flex: 0 0 40px;
     text-align: right;
     font-size: 12px;
+    line-height: 1;
     color: #606266;
-    font-weight: 500;
+  }
+}
+
+.report-error {
+  margin: 0 0 12px;
+}
+
+.mismatch-shots {
+  display: flex;
+  gap: 12px;
+
+  p {
+    margin: 0 0 8px;
+  }
+
+  img {
+    width: 100%;
+    max-height: 420px;
+    object-fit: contain;
+    background: #f5f7fa;
+  }
+
+  > div {
+    flex: 1;
+    min-width: 0;
   }
 }
 
@@ -881,11 +1088,25 @@ onBeforeUnmount(() => {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 16px;
+    min-height: 32px;
   }
 
   .card-actions {
     display: flex;
-    gap: 12px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .card-actions :deep(.el-button) {
+    margin: 0;
+    height: 32px;
+    padding: 0 10px;
+  }
+
+  :deep(.el-table .cell) {
+    white-space: nowrap;
+    line-height: 23px;
   }
 
   :deep(.el-card__header) {
@@ -925,5 +1146,23 @@ onBeforeUnmount(() => {
   .device-card :deep(.el-form-item__label) {
     font-size: 13px;
   }
+}
+
+.report-video {
+  width: 100%;
+  max-height: 240px;
+  margin-bottom: 12px;
+  background: #000;
+}
+
+.report-shot {
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  background: #f5f7fa;
+}
+
+.report-download {
+  margin-right: 12px;
 }
 </style>

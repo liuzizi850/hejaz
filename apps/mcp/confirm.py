@@ -47,7 +47,7 @@ def notify_pending_approval(pending: McpPendingConfirm):
             logger.debug('MCP 审批通知跳过：未配置启用的通知渠道')
             return
         message = (
-            f'【TestHub MCP 危险操作待审批】\n'
+            f'【Hejaz MCP 危险操作待审批】\n'
             f'发起人：{pending.user.username}\n'
             f'操作：{pending.tool_name}\n'
             f'影响：{pending.preview}\n'
@@ -128,7 +128,7 @@ def consume_pending(pending: McpPendingConfirm, user) -> dict:
         return {
             'status': 'awaiting_approval',
             'pending_id': pending.id,
-            'hint': '人工审批模式已开启：该操作已转入 TestHub「MCP 控制台」等待批准，'
+            'hint': '人工审批模式已开启：该操作已转入 Hejaz「MCP 控制台」等待批准，'
                     '请稍后调用 get_approval_status 轮询审批结果',
         }
     action = ACTION_REGISTRY.get(pending.tool_name)

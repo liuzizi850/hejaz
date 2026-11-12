@@ -17,7 +17,8 @@ export default {
     monitor: '监控中心',
     performanceTesting: '性能测试',
     mcp: 'MCP 管理端',
-    docs: '文档中心'
+    docs: '文档中心',
+    codeMonitor: '代码监控'
   },
   menu: {
     // AI用例生成
@@ -104,6 +105,13 @@ export default {
     // MCP
     mcpConsole: 'MCP 控制台',
     // 文档中心
-    docsCenter: '文档中心'
+    docsCenter: '文档中心',
+    extractApi: '提取 API',
+    codeAddresses: '代码地址',
+    scanTasks: '扫描任务',
+    downloadResults: '下载结果',
+    requirementReview: '需求检查',
+    reviewTasks: '检查任务',
+    reviewReports: '下载报告'
   }
 }

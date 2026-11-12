@@ -85,6 +85,15 @@
           <p>{{ $t('home.apiTestingDesc') }}</p>
         </div>
 
+        <!-- 代码监控 -->
+        <div class="nav-card" @click="handleNavigate('code-monitor')" role="button" tabindex="0">
+          <div class="card-icon code-monitor-icon">
+            <el-icon><Tickets /></el-icon>
+          </div>
+          <h3>{{ $t('home.codeMonitor') }}</h3>
+          <p>{{ $t('home.codeMonitorDesc') }}</p>
+        </div>
+
         <!-- UI自动化测试 -->
         <div class="nav-card" @click="handleNavigate('ui')" role="button" tabindex="0">
           <div class="card-icon ui-icon">
@@ -95,7 +104,7 @@
         </div>
 
         <!-- Bug缺陷管理 -->
-        <div class="nav-card" @click="handleNavigate('defects')" role="button" tabindex="0">
+        <div v-if="!hiddenHomeModules.has('defects')" class="nav-card" @click="handleNavigate('defects')" role="button" tabindex="0">
           <div class="card-icon defects-icon">
             <el-icon><Tickets /></el-icon>
           </div>
@@ -104,7 +113,7 @@
         </div>
 
         <!-- 数据工厂 -->
-        <div class="nav-card" @click="handleNavigate('data')" role="button" tabindex="0">
+        <div v-if="!hiddenHomeModules.has('data')" class="nav-card" @click="handleNavigate('data')" role="button" tabindex="0">
           <div class="card-icon data-icon">
             <el-icon><DataLine /></el-icon>
           </div>
@@ -147,7 +156,7 @@
         </div>
 
         <!-- 智能评分器 -->
-        <div class="nav-card" @click="handleNavigate('judge')" role="button" tabindex="0">
+        <div v-if="!hiddenHomeModules.has('judge')" class="nav-card" @click="handleNavigate('judge')" role="button" tabindex="0">
           <div class="card-icon judge-icon">
             <el-icon><Select /></el-icon>
           </div>
@@ -156,7 +165,7 @@
         </div>
 
         <!-- 性能测试 -->
-        <div class="nav-card" @click="handleNavigate('performance')" role="button" tabindex="0">
+        <div v-if="!hiddenHomeModules.has('performance')" class="nav-card" @click="handleNavigate('performance')" role="button" tabindex="0">
           <div class="card-icon perf-icon">
             <el-icon><Odometer /></el-icon>
           </div>
@@ -165,7 +174,7 @@
         </div>
 
         <!-- 监控中心 -->
-        <div class="nav-card" @click="handleNavigate('monitor')" role="button" tabindex="0">
+        <div v-if="!hiddenHomeModules.has('monitor')" class="nav-card" @click="handleNavigate('monitor')" role="button" tabindex="0">
           <div class="card-icon monitor-icon">
             <el-icon><Odometer /></el-icon>
           </div>
@@ -174,7 +183,7 @@
         </div>
 
         <!-- MCP 管理端 -->
-        <div class="nav-card" @click="handleNavigate('mcp')" role="button" tabindex="0">
+        <div v-if="!hiddenHomeModules.has('mcp')" class="nav-card" @click="handleNavigate('mcp')" role="button" tabindex="0">
           <div class="card-icon mcp-icon">
             <el-icon><Connection /></el-icon>
           </div>
@@ -183,20 +192,12 @@
         </div>
 
         <!-- 文档中心 -->
-        <div class="nav-card" @click="handleNavigate('docs')" role="button" tabindex="0">
+        <div v-if="!hiddenHomeModules.has('docs')" class="nav-card" @click="handleNavigate('docs')" role="button" tabindex="0">
           <div class="card-icon docs-icon">
             <el-icon><Document /></el-icon>
           </div>
           <h3>{{ $t('home.docsCenter') }}</h3>
           <p>{{ $t('home.docsCenterDesc') }}</p>
-        </div>
-
-        <div class="nav-card" @click="handleNavigate('code-monitor')" role="button" tabindex="0">
-          <div class="card-icon code-monitor-icon">
-            <el-icon><Tickets /></el-icon>
-          </div>
-          <h3>{{ $t('home.codeMonitor') }}</h3>
-          <p>{{ $t('home.codeMonitorDesc') }}</p>
         </div>
       </div>
     </div>
@@ -239,6 +240,17 @@ const router = useRouter()
 const { t } = useI18n()
 const userStore = useUserStore()
 const appStore = useAppStore()
+
+// 首页入口暂时下线。恢复时从集合里删掉对应 key 即可。
+const hiddenHomeModules = new Set([
+  'defects',
+  'data',
+  'judge',
+  'performance',
+  'monitor',
+  'mcp',
+  'docs'
+])
 
 // 当前语言
 const currentLanguage = computed(() => appStore.language)

@@ -24,8 +24,9 @@ class ScanTaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = ScanTask
         fields = [
-            "id", "source_type", "git_url", "model_config", "model_config_name",
-            "status", "progress", "error_message", "has_result", "created_at",
+            "id", "source_type", "task_type", "requirement_text", "git_url",
+            "model_config", "model_config_name", "status", "progress",
+            "error_message", "has_result", "created_at",
         ]
         read_only_fields = fields
 

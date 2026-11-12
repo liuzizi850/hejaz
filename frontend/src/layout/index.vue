@@ -4,10 +4,11 @@
       <!-- 侧边栏 -->
       <el-aside width="240px">
         <div class="logo" @click="router.push('/home')" style="cursor: pointer;">
-          <img :src="logoImage" alt="TestHub" class="logo-img" />
+          <img :src="logoImage" alt="Hejaz" class="logo-img" />
         </div>
         <el-menu
           :default-active="$route.path"
+          :default-openeds="currentModule === 'code-monitor' ? ['code-monitor-extract', 'code-monitor-review'] : []"
           router
           background-color="#001529"
           text-color="#fff"
@@ -196,6 +197,10 @@
               <el-icon><Document /></el-icon>
               <span>{{ $t('menu.testCases') }}</span>
             </el-menu-item>
+            <el-menu-item index="/app-automation/recording">
+              <el-icon><VideoCamera /></el-icon>
+              <span>录制用例</span>
+            </el-menu-item>
             <el-menu-item index="/app-automation/test-suites">
               <el-icon><FolderOpened /></el-icon>
               <span>{{ $t('menu.suiteManagement') }}</span>
@@ -375,6 +380,27 @@
               <span>{{ $t('menu.docsCenter') }}</span>
             </el-menu-item>
           </template>
+
+          <!-- 代码监控模块菜单 -->
+          <template v-else-if="currentModule === 'code-monitor'">
+            <el-sub-menu index="code-monitor-extract">
+              <template #title>
+                <el-icon><Tickets /></el-icon>
+                <span>{{ $t('menu.extractApi') }}</span>
+              </template>
+              <el-menu-item index="/code-monitor/addresses">{{ $t('menu.codeAddresses') }}</el-menu-item>
+              <el-menu-item index="/code-monitor/tasks">{{ $t('menu.scanTasks') }}</el-menu-item>
+              <el-menu-item index="/code-monitor/downloads">{{ $t('menu.downloadResults') }}</el-menu-item>
+            </el-sub-menu>
+            <el-sub-menu index="code-monitor-review">
+              <template #title>
+                <el-icon><Check /></el-icon>
+                <span>{{ $t('menu.requirementReview') }}</span>
+              </template>
+              <el-menu-item index="/code-monitor/review-tasks">{{ $t('menu.reviewTasks') }}</el-menu-item>
+              <el-menu-item index="/code-monitor/review-downloads">{{ $t('menu.reviewReports') }}</el-menu-item>
+            </el-sub-menu>
+          </template>
         </el-menu>
       </el-aside>
 
@@ -448,7 +474,7 @@ import {
   Monitor, Folder, Document, Flag, Check, Collection, VideoPlay,
   DataAnalysis, ChatDotRound, DocumentCopy, Link, MagicStick,
   Odometer, Timer, Setting, AlarmClock, Bell, Aim, Edit, Cpu, ArrowDown, Cellphone, Connection, FolderOpened, Tickets, Plus, Finished,
-  SetUp, TrendCharts
+  SetUp, TrendCharts, VideoCamera
 } from '@element-plus/icons-vue'
 import logoSvg from '@/assets/images/logo.svg'
 import logoHomePng from '@/assets/images/logo_home.png'
@@ -488,6 +514,7 @@ const currentModule = computed(() => {
   if (route.path.startsWith('/performance-testing')) return 'performance-testing'
   if (route.path.startsWith('/mcp')) return 'mcp'
   if (route.path.startsWith('/docs-center')) return 'docs'
+  if (route.path.startsWith('/code-monitor')) return 'code-monitor'
   return ''
 })
 
@@ -504,7 +531,8 @@ const moduleName = computed(() => {
     'monitor': t('modules.monitor'),
     'performance-testing': t('modules.performanceTesting'),
     'mcp': t('modules.mcp'),
-    'docs': t('modules.docs')
+    'docs': t('modules.docs'),
+    'code-monitor': t('modules.codeMonitor')
   }
   return map[currentModule.value] || ''
 })
@@ -562,6 +590,7 @@ const breadcrumbTitle = computed(() => {
     '/app-automation/elements': t('menu.elementManagement'),
     '/app-automation/scene-builder': t('menu.caseDesign'),
     '/app-automation/test-cases': t('menu.testCases'),
+    '/app-automation/recording': '录制用例',
     '/app-automation/test-suites': t('menu.suiteManagement'),
     '/app-automation/scheduled-tasks': t('menu.scheduledTasks'),
     '/app-automation/notification-logs': t('menu.notificationList'),
@@ -590,6 +619,12 @@ const breadcrumbTitle = computed(() => {
     '/llm-judge/history': t('menu.judgeHistory'),
     '/llm-judge/rubrics': t('menu.judgeRubrics'),
     '/llm-judge/knowledge': t('menu.judgeKnowledgeBase'),
+
+    '/code-monitor/addresses': t('menu.codeAddresses'),
+    '/code-monitor/tasks': t('menu.scanTasks'),
+    '/code-monitor/downloads': t('menu.downloadResults'),
+    '/code-monitor/review-tasks': t('menu.reviewTasks'),
+    '/code-monitor/review-downloads': t('menu.reviewReports'),
 
     '/profile': t('nav.profile')
   }

@@ -20,15 +20,19 @@ logger = logging.getLogger(__name__)
 
 def get_adb_path() -> str:
     """
-    获取 ADB 路径：优先使用数据库配置，否则使用默认值 'adb'
+    获取 ADB 路径：数据库里的自定义路径优先，否则用 PATH 或本机 Android SDK。
     """
     try:
         from ..models import AppTestConfig
         config = AppTestConfig.objects.first()
-        return config.adb_path if config else 'adb'
+        configured = (config.adb_path if config else '') or ''
     except Exception as e:
         logger.warning(f"获取 ADB 配置失败，使用默认路径: {e}")
-        return 'adb'
+        configured = ''
+    if configured and configured != 'adb':
+        return configured
+    from ..recording.adb_gateway import adb_executable
+    return adb_executable()
 
 
 class AppDeviceViewSet(viewsets.ModelViewSet):

@@ -25,6 +25,12 @@ class ScanTask(models.Model):
         (SOURCE_GIT, "Git"),
         (SOURCE_ZIP, "zip"),
     ]
+    TASK_API_EXTRACT = "api_extract"
+    TASK_REQUIREMENT_REVIEW = "requirement_review"
+    TASK_TYPE_CHOICES = [
+        (TASK_API_EXTRACT, "提取 API"),
+        (TASK_REQUIREMENT_REVIEW, "需求检查"),
+    ]
     STATUS_PENDING = "pending"
     STATUS_RUNNING = "running"
     STATUS_SUCCEEDED = "succeeded"
@@ -37,6 +43,13 @@ class ScanTask(models.Model):
     ]
 
     source_type = models.CharField(max_length=10, choices=SOURCE_CHOICES, verbose_name="来源类型")
+    task_type = models.CharField(
+        max_length=32,
+        choices=TASK_TYPE_CHOICES,
+        default=TASK_API_EXTRACT,
+        verbose_name="任务类型",
+    )
+    requirement_text = models.TextField(blank=True, default="", verbose_name="需求原文")
     git_url = models.CharField(max_length=500, blank=True, default="", verbose_name="Git 地址")
     archive = models.FileField(upload_to="code_monitor/archives/", null=True, blank=True, verbose_name="上传的 zip")
     model_config = models.ForeignKey(

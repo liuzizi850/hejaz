@@ -9,6 +9,7 @@ from apps.code_monitor.acquire import (
     FETCH_TIMEOUT_SECONDS,
     AcquireError,
     clone_repository,
+    _extended_path,
     redact,
     unzip_archive,
 )
@@ -50,6 +51,23 @@ def test_token_is_not_part_of_the_git_command(tmp_path: Path, monkeypatch):
             if key == "GIT_TERMINAL_PROMPT":
                 continue
             assert os.environ.get(key) == value
+
+
+def test_gitlab_token_is_sent_as_password(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr("apps.code_monitor.acquire.subprocess.run", fake_run)
+    clone_repository(
+        "https://gitlab.com/group/repo.git",
+        tmp_path / "repo",
+        token="super-secret-token",
+    )
+    assert calls[0][7] == "https://oauth2:super-secret-token@gitlab.com/group/repo.git"
+    assert calls[1][-1] == "https://gitlab.com/group/repo.git"
 
 
 def test_clone_without_token_does_not_set_url(tmp_path: Path, monkeypatch):
@@ -137,6 +155,19 @@ def test_unzip_rejects_path_escape(tmp_path: Path):
     with pytest.raises(AcquireError, match="压缩包路径不安全"):
         unzip_archive(archive, dest)
     assert not (tmp_path / "outside.txt").exists()
+
+
+def test_unzip_extracts_long_paths(tmp_path: Path):
+    archive = tmp_path / "long.zip"
+    dest = tmp_path / "out"
+    relative = "/".join(["b" * 40] * 8) + "/c.js"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("src/api.js", "axios.get('/api/a')")
+        zf.writestr(relative, "console.log(1)")
+    unzip_archive(archive, dest)
+    assert (dest / "src" / "api.js").read_text(encoding="utf-8") == "axios.get('/api/a')"
+    target = dest.joinpath(*relative.split("/"))
+    assert Path(_extended_path(target)).read_text(encoding="utf-8") == "console.log(1)"
 
 
 def test_unzip_extracts_safe_files(tmp_path: Path):

@@ -34,28 +34,30 @@ def test_keeps_path_or_content_match(tmp_path: Path):
     assert kept == ["src/api/client.js", "src/plain.js"]
 
 
-def test_content_keywords(tmp_path: Path):
-    samples = {
-        "a.js": "fetch('/a')",
-        "b.py": "urlpatterns = []",
-        "c.java": "@GetMapping('/c')",
-        "d.java": "@PostMapping('/d')",
-        "e.java": "@PutMapping('/e')",
-        "f.java": "@DeleteMapping('/f')",
-        "g.java": "@PatchMapping('/g')",
-        "h.js": "app.get('/h')",
-        "i.js": "app.post('/i')",
-        "j.js": "app.put('/j')",
-        "k.js": "app.delete('/k')",
-        "l.js": "router.get('/l')",
-        "m.js": "router.post('/m')",
-        "n.js": "router.put('/n')",
-        "o.js": "router.delete('/o')",
-    }
-    for name, text in samples.items():
-        _write(tmp_path / name, text)
-    kept = {p.name for p in select_candidate_files(tmp_path)}
-    assert kept == set(samples)
+def test_keeps_frontend_and_ios_calls_not_backend(tmp_path: Path):
+    _write(tmp_path / "src" / "api.ts", "export const x = 1")
+    _write(tmp_path / "src" / "page.vue", "axios.get('/orders')")
+    _write(tmp_path / "App" / "UserAPI.swift", "let task = session.dataTask(with: request)")
+    _write(tmp_path / "App" / "ProfileService.m", "[[Alamofire request:url] responseJSON:^(id resp) {}];")
+    _write(tmp_path / "App" / "UserViewController.swift", "override func viewDidLoad() {}")
+    _write(tmp_path / "Pods" / "Alamofire" / "Session.swift", "URLSession.shared.dataTask(with: request)")
+    _write(tmp_path / "lib" / "api" / "user_api.dart", "final dio = Dio();\nawait dio.get('/users');")
+    _write(tmp_path / "lib" / "order.dart", "import 'package:http/http.dart' as http;\nawait http.get(uri);")
+    _write(tmp_path / "lib" / "home.dart", "class HomePage extends StatelessWidget {}")
+    _write(tmp_path / ".dart_tool" / "flutter_build" / "api.dart", "dio.get('/skip');")
+    _write(tmp_path / "server.py", "urlpatterns = []")
+    _write(tmp_path / "Api.java", "@GetMapping('/skip')")
+    _write(tmp_path / "docs" / "claude.md", "fetch('/skip')")
+    _write(tmp_path / "notes.txt", "axios.get('/skip')")
+    kept = [p.relative_to(tmp_path).as_posix() for p in select_candidate_files(tmp_path)]
+    assert kept == [
+        "App/ProfileService.m",
+        "App/UserAPI.swift",
+        "lib/api/user_api.dart",
+        "lib/order.dart",
+        "src/api.ts",
+        "src/page.vue",
+    ]
 
 
 def test_resolved_path_outside_scan_root_is_rejected(tmp_path: Path):
