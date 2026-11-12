@@ -30,7 +30,7 @@ SYSTEM_PROMPT = """你是 Android UI 测试执行器。根据当前 BDD 步骤�
 规则：
 1. 被测应用包名由运行时提供，不要假设或编造其他包名。
 2. 优先点击层级里已有的可见文本（数字、+、=、等号、C 等）。
-3. 不要规划一整条脚本，一次只返回下一步动作。
+3. 不要规划一整条脚本，一次只返回下一步动作。按钮可能只有 content_desc 而没有 text，click 时应使用层级里的 text、content_desc 或 bounds。
 4. 当前步骤目标已达成时返回 step_done。
 5. 无法继续时返回 fail 并写明 reason。
 6. 禁止白名单之外的动作，禁止自主探索无关界面。
@@ -147,7 +147,10 @@ def run_scenario(
                         screenshots=screenshots,
                         steps=traces,
                     )
-                result = _exec(payload, nodes)
+                try:
+                    result = _exec(payload, nodes)
+                except ActionError as exc:
+                    result = ActionResult(ok=False, message=str(exc))
                 total_actions += 1
                 step_actions += 1
                 summary = f"{step.keyword} {step.text} -> {payload.get('action')}: {result.message}"
@@ -155,7 +158,7 @@ def run_scenario(
                 history.append(summary)
                 if result.step_done:
                     break
-                if result.assertion_failed or result.abort or not result.ok:
+                if result.assertion_failed or result.abort:
                     return CaseResult(
                         case_id=scenario.case_id,
                         name=scenario.name,
@@ -164,6 +167,7 @@ def run_scenario(
                         screenshots=screenshots,
                         steps=traces,
                     )
+                # Recoverable action failures (e.g. a missed click) stay in the step loop.
         return CaseResult(
             case_id=scenario.case_id,
             name=scenario.name,

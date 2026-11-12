@@ -162,3 +162,55 @@ def test_missing_llm_config_is_clear(monkeypatch):
 def test_parse_json_object_accepts_fences():
     data = parse_json_object("```json\n{\"action\": \"step_done\"}\n```")
     assert data["action"] == "step_done"
+
+def test_find_node_matches_content_desc():
+    from tools.req001.actions import _find_node, _click_label, _parse_bounds_value
+    from tools.req001.ui_observe import UiNode
+
+    nodes = [
+        UiNode(text="", content_desc="1", clickable=True, bounds=[0, 1716, 254, 1965]),
+        UiNode(text="", content_desc="+", clickable=True, bounds=[760, 1716, 1014, 1965]),
+    ]
+    found = _find_node(nodes, text="1")
+    assert found is not None and found.content_desc == "1"
+    assert _click_label({"content_desc": "1"}) == "1"
+    assert _click_label({"action": "click"}) == ""
+    assert _parse_bounds_value("[0,1716][254,1965]") == [0, 1716, 254, 1965]
+
+
+def test_recoverable_click_miss_does_not_abort_case(tmp_path):
+    shot = tmp_path / "s.png"
+    shot.write_bytes(b"png")
+    # First action is a bad click (no locator); runner should continue, then finish.
+    script = [
+        json.dumps({"action": "click"}),
+        json.dumps({"action": "step_done"}),
+        json.dumps({"action": "step_done"}),
+        json.dumps({"action": "step_done"}),
+    ]
+    clicks = {"n": 0}
+
+    def dump():
+        return [], shot, []
+
+    def exec_fn(action, nodes):
+        if action["action"] == "click":
+            clicks["n"] += 1
+            from tools.req001.actions import ActionResult
+            return ActionResult(ok=False, message="找不到可点击目标: label=None resource_id=None")
+        if action["action"] == "step_done":
+            from tools.req001.actions import ActionResult
+            return ActionResult(ok=True, step_done=True, message="done")
+        from tools.req001.actions import ActionResult
+        return ActionResult(ok=True, message="ok")
+
+    result = run_scenario(
+        _scenario(),
+        app_package="demo.app",
+        client=_client(script),
+        dump_fn=dump,
+        exec_fn=exec_fn,
+    )
+    assert clicks["n"] == 1
+    assert result.status == "pass"
+    assert result.failure_reason == ""

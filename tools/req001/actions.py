@@ -2,6 +2,7 @@
 """Whitelist UI actions executed through ADB (and Airtest wrappers when present)."""
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,30 @@ def validate_action(data: Dict[str, Any]) -> Dict[str, Any]:
     if name not in WHITELIST:
         raise ActionError(f"非法动作「{name or '?'}」不在白名单中: {sorted(WHITELIST)}")
     return data
+
+
+def _parse_bounds_value(value):
+    """Accept [x1,y1,x2,y2], [x,y], or a string like '[0,1716][254,1965]'."""
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            return [int(x) for x in value]
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, str):
+        nums = re.findall(r"-?\d+", value)
+        if len(nums) >= 2:
+            return [int(x) for x in nums]
+    return None
+
+
+def _click_label(data: Dict[str, Any]) -> str:
+    for key in ("text", "content_desc", "content-desc", "label", "target", "name", "button", "desc"):
+        val = data.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
 
 
 def _find_node(nodes: Sequence[UiNode], text: Optional[str] = None, resource_id: Optional[str] = None) -> Optional[UiNode]:
@@ -197,21 +222,33 @@ def execute_action(
         return ActionResult(ok=True, message=f"已启动 {app_package}")
 
     if name == "click":
-        bounds = data.get("bounds")
-        if isinstance(bounds, (list, tuple)) and len(bounds) >= 2:
-            if len(bounds) == 2:
-                x, y = int(bounds[0]), int(bounds[1])
-            else:
-                x = (int(bounds[0]) + int(bounds[2])) // 2
-                y = (int(bounds[1]) + int(bounds[3])) // 2
+        if data.get("x") is not None and data.get("y") is not None:
+            x, y = int(data["x"]), int(data["y"])
             _tap(adb, serial, x, y)
             return ActionResult(ok=True, message=f"点击 ({x},{y})")
-        node = _find_node(nodes, text=data.get("text"), resource_id=data.get("resource_id") or data.get("resource-id"))
+        bounds = _parse_bounds_value(data.get("bounds") or data.get("xy"))
+        if bounds and len(bounds) >= 2:
+            if len(bounds) == 2:
+                x, y = bounds[0], bounds[1]
+            else:
+                x = (bounds[0] + bounds[2]) // 2
+                y = (bounds[1] + bounds[3]) // 2
+            _tap(adb, serial, x, y)
+            return ActionResult(ok=True, message=f"点击 ({x},{y})")
+        label = _click_label(data)
+        node = _find_node(
+            nodes,
+            text=label or None,
+            resource_id=data.get("resource_id") or data.get("resource-id"),
+        )
         if node and node.center:
             x, y = node.center
             _tap(adb, serial, x, y)
             return ActionResult(ok=True, message=f"点击「{node.visible_text or node.resource_id}」({x},{y})")
-        raise ActionError(f"找不到可点击目标: text={data.get('text')!s} resource_id={data.get('resource_id')!s}")
+        return ActionResult(
+            ok=False,
+            message=f"找不到可点击目标: label={label or None} resource_id={data.get('resource_id')!s}",
+        )
 
     if name == "input":
         text = str(data.get("text") or data.get("value") or "")
