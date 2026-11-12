@@ -12,7 +12,9 @@ from tools.req001.bdd_parser import Scenario, Step
 from tools.req001.errors import ActionError, LlmConfigError
 from tools.req001.exec_guards import (
     RepeatClickGuard,
+    display_texts,
     evaluate_calc_completion,
+    extract_calc_expectation,
     hierarchy_fingerprint,
     resolve_click_target,
 )
@@ -120,7 +122,9 @@ def run_scenario(
         if path and Path(path).is_file():
             screenshots.append(str(path))
 
-    click_guard = RepeatClickGuard()
+    expectation = extract_calc_expectation(scenario)
+    click_guard = RepeatClickGuard(expression=expectation.expression if expectation else '')
+
 
     def _fail(reason: str) -> CaseResult:
         traces.append(reason)
@@ -152,7 +156,8 @@ def run_scenario(
                 nodes, shot, compact = _dump()
                 _record_shot(shot)
                 fingerprint = hierarchy_fingerprint(nodes)
-                click_guard.observe(fingerprint)
+                texts = display_texts(nodes)
+                click_guard.observe(fingerprint, display_text=texts[0] if texts else '')
 
                 completion = evaluate_calc_completion(scenario, step, nodes, history)
                 if completion.kind == "when_done":
@@ -185,10 +190,10 @@ def run_scenario(
                 target = None
                 if str(payload.get("action") or "") == "click":
                     target = resolve_click_target(payload, nodes)
-                    if target is not None and click_guard.blocks((target.x, target.y)):
+                    if target is not None and click_guard.blocks((target.x, target.y), label=target.label):
                         result = ActionResult(
                             ok=False,
-                            message=click_guard.reject_message((target.x, target.y)),
+                            message=click_guard.reject_message((target.x, target.y), label=target.label),
                             click_xy=(target.x, target.y),
                         )
                         total_actions += 1
@@ -211,7 +216,7 @@ def run_scenario(
                 if click_xy is None and target is not None:
                     click_xy = (target.x, target.y)
                 if str(payload.get("action") or "") == "click" and result.ok and click_xy:
-                    click_guard.record_click(click_xy)
+                    click_guard.record_click(click_xy, label=(target.label if target is not None else ''))
                 if result.step_done:
                     break
                 if result.assertion_failed or result.abort:

@@ -189,29 +189,42 @@ def hierarchy_fingerprint(nodes: Sequence[UiNode]) -> str:
 
 
 class RepeatClickGuard:
-    """Block re-clicking the same coordinates when the previous click did not change the UI."""
+    """Block same-coordinate empty clicks, and same-digit clicks that do not advance the expression."""
 
-    def __init__(self, same_px: int = 8):
+    def __init__(self, same_px: int = 8, expression: str = ""):
         self.same_px = same_px
+        self.expression = normalize_expr(expression or "")
         self._blocked: List[Tuple[int, int]] = []
         self._pending_xy: Optional[Tuple[int, int]] = None
         self._pending_pre_fp: Optional[str] = None
         self._last_fp: Optional[str] = None
+        self._last_display: str = ""
 
     @property
     def blocked(self) -> Tuple[Tuple[int, int], ...]:
         return tuple(self._blocked)
 
-    def observe(self, fingerprint: str) -> None:
+    def observe(self, fingerprint: str, display_text: str = "") -> None:
         """Call at the start of each loop with the current screen fingerprint."""
         if self._pending_xy is not None and self._pending_pre_fp is not None:
             if fingerprint == self._pending_pre_fp:
                 self._block(self._pending_xy)
         self._last_fp = fingerprint
+        self._last_display = display_text or ""
         self._pending_xy = None
         self._pending_pre_fp = None
 
-    def blocks(self, xy: Optional[Tuple[int, int]]) -> bool:
+    def _token_blocks(self, label: str) -> bool:
+        if not self.expression:
+            return False
+        token = normalize_expr(label or "")
+        if not token.isdigit():
+            return False
+        return not click_advances_expression(self._last_display, self.expression, token)
+
+    def blocks(self, xy: Optional[Tuple[int, int]], label: str = "") -> bool:
+        if self._token_blocks(label):
+            return True
         if not xy:
             return False
         x, y = xy
@@ -220,12 +233,18 @@ class RepeatClickGuard:
                 return True
         return False
 
-    def record_click(self, xy: Tuple[int, int]) -> None:
+    def record_click(self, xy: Tuple[int, int], label: str = "") -> None:
         """Record a click that was actually sent, compared against the last observe()."""
         self._pending_xy = xy
         self._pending_pre_fp = self._last_fp
 
-    def reject_message(self, xy: Tuple[int, int]) -> str:
+    def reject_message(self, xy: Tuple[int, int], label: str = "") -> str:
+        if self._token_blocks(label):
+            shown = label or f"{xy[0]},{xy[1]}"
+            return (
+                f"表达式未进展，拒绝重复点击「{shown}」({xy[0]},{xy[1]})，"
+                "请改用控件 text / content_desc / bounds 定位其他按键"
+            )
         return (
             f"屏幕未变化，拒绝重复点击同一坐标 ({xy[0]},{xy[1]})，"
             "请改用控件 text / content_desc / bounds 定位其他按键"
@@ -263,6 +282,43 @@ def normalize_expr(value: str) -> str:
         .replace("×", "*")
         .replace("÷", "/")
     )
+
+
+
+def expression_tokens(expression: str) -> List[str]:
+    """Split a normalized calculation into number and operator tokens, e.g. 11+2 -> ['11', '+', '2']."""
+    return re.findall(r"\d+|[+\-*/=]", normalize_expr(expression))
+
+
+def expression_progress(display: str, expression: str) -> Tuple[int, int]:
+    """How far display has walked the expected tokens: (completed_tokens, partial_chars)."""
+    tokens = expression_tokens(expression)
+    text = normalize_expr(display or "")
+    if "=" in text:
+        text = text.split("=", 1)[0]
+    completed = 0
+    for token in tokens:
+        if text.startswith(token):
+            text = text[len(token):]
+            completed += 1
+            continue
+        if text and token.startswith(text):
+            return (completed, len(text))
+        return (completed, 0)
+    return (completed, 0)
+
+
+def click_advances_expression(display: str, expression: str, label: str) -> bool:
+    """True when appending this key label would increase expression token progress."""
+    token = normalize_expr(label or "")
+    if not expression or not token:
+        return True
+    text = normalize_expr(display or "")
+    if "=" in text:
+        text = text.split("=", 1)[0]
+    before = expression_progress(text, expression)
+    after = expression_progress(text + token, expression)
+    return after > before
 
 
 def extract_calc_expectation(scenario: Scenario) -> Optional[CalcExpectation]:

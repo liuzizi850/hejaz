@@ -18,7 +18,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from tools.req001.actions import execute_action
-from tools.req001.adb_utils import find_adb, list_devices, run_adb
+from tools.req001.adb_utils import AdbDevice, find_adb, list_devices, looks_like_emulator, run_adb
 from tools.req001.ai_runner import Observer, run_scenario
 from tools.req001.app_fixture import AdbShell, resolve_target_app
 from tools.req001.bdd_parser import iter_scenarios, parse_feature_file
@@ -60,6 +60,12 @@ def _force_stop_and_launch(adb: Path, serial: str, package: str) -> None:
     time.sleep(1)
     execute_action({"action": "launch_app"}, adb=adb, serial=serial, app_package=package, nodes=[])
     time.sleep(2)
+
+
+
+def _serial_is_emulator(serial: str) -> bool:
+    """Classify from the serial/extra pattern only; do not probe or reboot the device."""
+    return looks_like_emulator(AdbDevice(serial=serial, state="device"), adb=None)
 
 
 def _confirm_serial_online(serial: str, *, adb: Optional[Path] = None, list_devices_fn=None) -> Path:
@@ -206,11 +212,18 @@ def run_selected(
                 _force_stop_and_launch(adb_path, serial, app.package)
 
             checker = keypad_check_fn or ensure_keypad_ready
-            check = checker(
-                _dump,
-                relaunch_fn=_relaunch,
-                reboot_fn=_reboot if allow_device_reboot else None,
-            )
+            is_emulator = _serial_is_emulator(serial)
+            # Never default-reboot a physical device, even when allow_device_reboot=True.
+            reboot_fn = _reboot if (allow_device_reboot and is_emulator) else None
+            try:
+                check = checker(
+                    _dump,
+                    relaunch_fn=_relaunch,
+                    reboot_fn=reboot_fn,
+                    is_emulator=is_emulator,
+                )
+            except TypeError:
+                check = checker(_dump, relaunch_fn=_relaunch, reboot_fn=reboot_fn)
             notes.append(check.message)
             if not check.visible:
                 result = CaseResult(

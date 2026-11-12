@@ -138,7 +138,14 @@ def test_same_key_allowed_again_after_screen_changes():
 def test_runner_rejects_spinning_same_coordinate_clicks(tmp_path):
     shot = tmp_path / "s.png"
     shot.write_bytes(b"png")
-    nodes = _nodes()
+    # Empty display so the first key-1 click is real token progress; this test
+    # covers the unchanged-screen coordinate guard, not same-digit token spinning.
+    nodes = parse_ui_hierarchy(
+        REAL_S2_XML.replace(
+            'text="1" clickable="true" class="android.widget.EditText"',
+            'text="" clickable="true" class="android.widget.EditText"',
+        )
+    )
     compact = []
     # Given done, then the model keeps proposing the display coordinates for "1".
     script = [
@@ -337,3 +344,119 @@ def test_evaluate_completion_none_for_non_calc_case():
     assert extract_calc_expectation(scenario) is None
     decision = evaluate_calc_completion(scenario, scenario.steps[0], _nodes(), [])
     assert decision.kind == "none"
+
+def test_same_digit_key_spinning_blocked_even_when_display_grows():
+    """S3 failure mode: repeating key 1 grows the display but does not advance 1+1."""
+    guard = RepeatClickGuard(expression="1+1")
+    allowed = 0
+    displays = ["", "1", "11", "111", "1111", "11111"]
+    for display in displays:
+        guard.observe("display=%s" % display, display_text=display)
+        if guard.blocks(KEY_1, label="1"):
+            break
+        guard.record_click(KEY_1, label="1")
+        allowed += 1
+    # The first 1 (empty -> "1") is progress; further 1s must stop well before 19.
+    assert allowed == 1
+    assert allowed < 5
+    guard.observe("display=11", display_text="11")
+    assert guard.blocks(KEY_1, label="1")
+    message = guard.reject_message(KEY_1, label="1")
+    assert "1" in message
+    assert "拒绝" in message
+
+
+def test_later_one_allowed_after_plus_advances_expression():
+    """After empty -> "1", a later 1 is still allowed once "+" has been entered."""
+    guard = RepeatClickGuard(expression="1+1")
+    guard.observe("display=", display_text="")
+    assert not guard.blocks(KEY_1, label="1")
+    guard.record_click(KEY_1, label="1")
+    guard.observe("display=1", display_text="1")
+    assert guard.blocks(KEY_1, label="1")
+    plus = (886, 1960)
+    assert not guard.blocks(plus, label="+")
+    guard.record_click(plus, label="+")
+    guard.observe("display=1+", display_text="1+")
+    assert not guard.blocks(KEY_1, label="1")
+
+
+def test_repeated_digits_allowed_when_token_is_eleven():
+    """Do not over-block an expression that actually needs a repeated-digit token like 11."""
+    guard = RepeatClickGuard(expression="11+2")
+    guard.observe("display=", display_text="")
+    assert not guard.blocks(KEY_1, label="1")
+    guard.record_click(KEY_1, label="1")
+    guard.observe("display=1", display_text="1")
+    assert not guard.blocks(KEY_1, label="1")
+    guard.record_click(KEY_1, label="1")
+    guard.observe("display=11", display_text="11")
+    assert guard.blocks(KEY_1, label="1")
+    plus = (886, 1960)
+    assert not guard.blocks(plus, label="+")
+
+
+def test_runner_stops_s3_same_digit_spin_and_fails_promptly(tmp_path):
+    """Given-phase S3 spin: keep clicking 1 while the display grows, then still end with expected 3 / actual 2."""
+    shot = tmp_path / "s.png"
+    shot.write_bytes(b"png")
+    state = {"display": ""}
+
+    def dump():
+        return _calc_keys(state["display"]), shot, []
+
+    # Reproduce the hand-test loop, then offer the rest of 1+1 so early-end can fire.
+    script = [json.dumps({"action": "click", "text": "1", "content_desc": "1", "x": 126, "y": 1960})] * 8
+    script += [
+        json.dumps({"action": "click", "content_desc": "+"}),
+        json.dumps({"action": "click", "text": "1", "content_desc": "1", "x": 126, "y": 1960}),
+        json.dumps({"action": "click", "content_desc": "="}),
+        json.dumps({"action": "wait", "seconds": 0}),
+        json.dumps({"action": "wait", "seconds": 0}),
+    ]
+    executed = []
+
+    def exec_fn(action, nodes):
+        if action["action"] == "step_done":
+            return ActionResult(ok=True, step_done=True, message="done")
+        label = action.get("text") or action.get("content_desc") or ""
+        if action["action"] == "click":
+            executed.append(label)
+            if label == "1":
+                if state["display"] in {"", "0"}:
+                    state["display"] = "1"
+                elif state["display"] in {"1+", "1 +"}:
+                    state["display"] = "1+1"
+                else:
+                    state["display"] = state["display"] + "1"
+            elif label in {"+", "＋"}:
+                state["display"] = (state["display"] or "") + "+"
+            elif label in {"=", "＝"}:
+                state["display"] = "2"
+        target = resolve_click_target(action, nodes) if action["action"] == "click" else None
+        xy = (target.x, target.y) if target else None
+        return ActionResult(
+            ok=True,
+            message="点击「%s」(%s,%s)" % (label, xy[0] if xy else 0, xy[1] if xy else 0),
+            click_xy=xy,
+        )
+
+    result = run_scenario(
+        parse_gherkin(S3_FEATURE).scenarios[0],
+        app_package="io.dahliaos.calculator",
+        client=_client(script),
+        dump_fn=dump,
+        exec_fn=exec_fn,
+        max_steps=20,
+    )
+    # Only the first 1 (to start the expression) and the 1 after "+" should be sent.
+    assert executed.count("1") == 2
+    assert "+" in executed
+    assert "=" in executed
+    assert state["display"] == "2"
+    assert any("拒绝" in step for step in result.steps)
+    assert result.status == "fail"
+    assert "实际结果为「2」" in result.failure_reason
+    assert "期望看到「3」" in result.failure_reason
+    assert "最大步数" not in result.failure_reason
+    assert all("wait" not in step for step in result.steps)
