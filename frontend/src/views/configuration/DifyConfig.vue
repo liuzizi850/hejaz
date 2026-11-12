@@ -44,6 +44,32 @@
             <div class="form-tip">{{ $t('configuration.dify.apiKeyTip') }}</div>
           </el-form-item>
 
+          <el-form-item :label="$t('configuration.dify.chatId')" prop="chat_id">
+            <el-select
+              v-if="availableChats.length"
+              v-model="form.chat_id"
+              filterable
+              allow-create
+              default-first-option
+              :placeholder="$t('configuration.dify.chatIdPlaceholder')"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="chat in availableChats"
+                :key="chat.id"
+                :label="chat.name ? `${chat.name} (${chat.id})` : chat.id"
+                :value="chat.id"
+              />
+            </el-select>
+            <el-input
+              v-else
+              v-model="form.chat_id"
+              :placeholder="$t('configuration.dify.chatIdPlaceholder')"
+              clearable
+            />
+            <div class="form-tip">{{ $t('configuration.dify.chatIdTip') }}</div>
+          </el-form-item>
+
           <el-form-item :label="$t('configuration.dify.enableStatus')" prop="is_active">
             <el-switch v-model="form.is_active" />
             <span class="switch-label">{{ form.is_active ? $t('configuration.common.enabled') : $t('configuration.common.disabled') }}</span>
@@ -77,6 +103,9 @@
           <el-descriptions-item :label="$t('configuration.dify.apiKey')">
             {{ currentConfig.api_key_masked || '****' }}
           </el-descriptions-item>
+          <el-descriptions-item :label="$t('configuration.dify.chatId')">
+            {{ currentConfig.chat_id || $t('configuration.common.notSet') }}
+          </el-descriptions-item>
           <el-descriptions-item :label="$t('configuration.common.status')">
             <el-tag :type="currentConfig.is_active ? 'success' : 'info'">
               {{ currentConfig.is_active ? $t('configuration.common.enabled') : $t('configuration.common.disabled') }}
@@ -107,10 +136,12 @@ const configForm = ref(null)
 const currentConfig = ref(null)
 const testing = ref(false)
 const saving = ref(false)
+const availableChats = ref([])
 
 const form = ref({
-  api_url: '',
+  api_url: 'http://127.0.0.1:9380',
   api_key: '',
+  chat_id: '',
   is_active: true
 })
 
@@ -120,7 +151,23 @@ const rules = computed(() => ({
     { type: 'url', message: t('configuration.dify.validation.apiUrlInvalid'), trigger: 'blur' }
   ],
   api_key: [
-    { min: 8, message: t('configuration.dify.validation.apiKeyMinLength'), trigger: 'blur' }
+    {
+      validator: (_rule, value, callback) => {
+        if (!currentConfig.value && !(value && value.trim())) {
+          callback(new Error(t('configuration.dify.messages.apiKeyRequired')))
+          return
+        }
+        if (value && value.trim() && value.trim().length < 8) {
+          callback(new Error(t('configuration.dify.validation.apiKeyMinLength')))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur'
+    }
+  ],
+  chat_id: [
+    { required: true, message: t('configuration.dify.validation.chatIdRequired'), trigger: 'blur' }
   ]
 }))
 
@@ -130,15 +177,18 @@ const formatDate = (dateString) => {
   return date.toLocaleString(locale.value === 'zh-cn' ? 'zh-CN' : 'en-US')
 }
 
+const applyConfigToForm = (config) => ({
+  api_url: config?.api_url || 'http://127.0.0.1:9380',
+  api_key: '',
+  chat_id: config?.chat_id || '',
+  is_active: config?.is_active ?? true
+})
+
 const loadConfig = async () => {
   try {
     const response = await api.get('/assistant/config/dify/')
     currentConfig.value = response.data
-    form.value = {
-      api_url: response.data.api_url,
-      api_key: '', // Don't populate API key for security
-      is_active: response.data.is_active
-    }
+    form.value = applyConfigToForm(response.data)
   } catch (error) {
     if (error.response?.status !== 404) {
       console.error(t('configuration.dify.messages.loadFailed'), error)
@@ -149,17 +199,26 @@ const loadConfig = async () => {
 const testConnection = async () => {
   if (!configForm.value) return
 
-  await configForm.value.validate(async (valid) => {
+  await configForm.value.validateField(['api_url', 'api_key'], async (valid) => {
     if (!valid) return
 
     testing.value = true
     try {
-      const response = await api.post('/assistant/config/dify/test_connection/', {
+      const payload = {
         api_url: form.value.api_url,
-        api_key: form.value.api_key
-      })
+        chat_id: form.value.chat_id
+      }
+      if (form.value.api_key && form.value.api_key.trim()) {
+        payload.api_key = form.value.api_key
+      }
+
+      const response = await api.post('/assistant/config/dify/test_connection/', payload)
 
       if (response.data.success) {
+        availableChats.value = response.data.chats || []
+        if (!form.value.chat_id && availableChats.value.length === 1) {
+          form.value.chat_id = availableChats.value[0].id
+        }
         ElMessage.success(t('configuration.dify.messages.testSuccess'))
       } else {
         ElMessage.error(response.data.error || t('configuration.dify.messages.testFailed'))
@@ -181,23 +240,20 @@ const saveConfig = async () => {
 
     saving.value = true
     try {
-      // Prepare data to save
       const dataToSave = {
         api_url: form.value.api_url,
+        chat_id: form.value.chat_id,
         is_active: form.value.is_active
       }
 
-      // Only send API Key if user entered a new one
       if (form.value.api_key && form.value.api_key.trim()) {
         dataToSave.api_key = form.value.api_key
       }
 
       if (currentConfig.value) {
-        // Update existing config
         await api.patch(`/assistant/config/dify/${currentConfig.value.id}/`, dataToSave)
         ElMessage.success(t('configuration.dify.messages.updateSuccess'))
       } else {
-        // Create new config - API key is required
         if (!form.value.api_key || !form.value.api_key.trim()) {
           ElMessage.error(t('configuration.dify.messages.apiKeyRequired'))
           saving.value = false
@@ -207,7 +263,6 @@ const saveConfig = async () => {
         ElMessage.success(t('configuration.dify.messages.saveSuccess'))
       }
 
-      // Clear API Key input for security
       form.value.api_key = ''
       await loadConfig()
     } catch (error) {
@@ -223,13 +278,7 @@ const resetForm = () => {
   if (configForm.value) {
     configForm.value.resetFields()
   }
-  if (currentConfig.value) {
-    form.value = {
-      api_url: currentConfig.value.api_url,
-      api_key: '',
-      is_active: currentConfig.value.is_active
-    }
-  }
+  form.value = applyConfigToForm(currentConfig.value)
 }
 
 onMounted(() => {

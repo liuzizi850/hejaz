@@ -22,18 +22,21 @@ export default {
     locale: 'zh-CN'
   },
 
-  // Dify 配置
+  // RAGFlow 配置（i18n key 仍为 dify，避免大面积改路由）
   dify: {
     title: 'AI评测师配置',
-    description: '配置Dify API以启用AI评测师功能',
-    apiConfig: 'Dify API配置',
+    description: '配置 RAGFlow API 以启用 AI 评测师功能',
+    apiConfig: 'RAGFlow API 配置',
     apiUrl: 'API URL',
-    apiUrlPlaceholder: 'https://api.dify.ai/v1',
-    apiUrlTip: 'Dify API的完整URL地址',
+    apiUrlPlaceholder: 'http://127.0.0.1:9380',
+    apiUrlTip: 'RAGFlow API 地址，一般是 http://127.0.0.1:9380',
     apiKey: 'API Key',
-    apiKeyPlaceholder: '请输入API Key',
-    apiKeyPlaceholderEdit: '留空则不修改API Key',
-    apiKeyTip: '从Dify平台获取的API密钥',
+    apiKeyPlaceholder: '请输入 API Key',
+    apiKeyPlaceholderEdit: '留空则不修改 API Key',
+    apiKeyTip: '在 RAGFlow 页面右上角头像菜单中创建的 API Key',
+    chatId: 'Chat ID',
+    chatIdPlaceholder: '请输入 Chat Assistant ID',
+    chatIdTip: '在 RAGFlow 的 Chat 应用里复制 Assistant ID；测试连接成功后也可从列表中选择',
     enableStatus: '启用状态',
     testConnection: '测试连接',
     currentConfig: '当前配置信息',
@@ -43,13 +46,14 @@ export default {
       saveSuccess: '配置保存成功！',
       updateSuccess: '配置更新成功！',
       saveFailed: '保存配置失败',
-      apiKeyRequired: '创建新配置时API Key是必填项',
+      apiKeyRequired: '创建新配置时 API Key 是必填项',
       loadFailed: '加载配置失败'
     },
     validation: {
-      apiUrlRequired: '请输入API URL',
-      apiUrlInvalid: '请输入有效的URL',
-      apiKeyMinLength: 'API Key长度至少8位'
+      apiUrlRequired: '请输入 API URL',
+      apiUrlInvalid: '请输入有效的 URL',
+      apiKeyMinLength: 'API Key 长度至少 8 位',
+      chatIdRequired: '请输入 Chat Assistant ID'
     }
   },
 

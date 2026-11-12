@@ -98,7 +98,7 @@ The Django project uses a modular app structure under `apps/`:
 - **reviews**: Test case review workflow with templates and assignments
 - **versions**: Version/release management
 - **requirement_analysis**: AI-powered requirement document parsing (PDF/Word/TXT) and test case generation
-- **assistant**: Dify AI chatbot integration
+- **assistant**: RAGFlow AI chatbot integration
 - **api_testing**: API testing module (HTTP/WebSocket, environments, scheduled tasks, Allure reports)
 - **ui_automation**: UI automation with Selenium/Playwright, element management, page objects, AI intelligent mode
 - **app_automation**: APP/mobile automation testing via Airtest + image recognition (OCR), with device management, WebSocket real-time execution progress, and Allure reports

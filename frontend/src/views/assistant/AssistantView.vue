@@ -13,8 +13,8 @@
         <div class="session-scroll-area">
           <div 
             v-for="session in historySessionsDescending" 
-            :key="session.id"
-            :class="['session-item', { active: currentSession?.id === session.id }]"
+            :key="session.id ?? session.session_id"
+            :class="['session-item', { active: isSessionActive(session) }]"
             @click="switchToSession(session)"
           >
             <div class="session-title-wrapper">
@@ -99,7 +99,7 @@
           <span class="chat-time" v-if="currentSession">{{ formatDate(currentSession.updated_at) }}</span>
         </div>
         
-        <div class="messages-container" ref="messagesContainer">
+        <div class="messages-container" ref="messagesContainer" @click="onMessagesClick">
           <div 
             v-for="(message, index) in messages" 
             :key="message.id || index"
@@ -110,7 +110,44 @@
               <el-avatar v-else :size="36" :icon="Cpu" class="ai-avatar" />
             </div>
             <div class="message-bubble">
-              <div class="message-content" v-html="formatMessageContent(message.content)"></div>
+              <div class="message-content">
+                <template v-for="(part, partIndex) in messageParts(message)" :key="partIndex">
+                  <br v-if="part.type === 'break'">
+                  <pre v-else-if="part.type === 'codeblock'"><code>{{ part.text }}</code></pre>
+                  <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                  <button
+                    v-else-if="part.type === 'cite'"
+                    type="button"
+                    class="kb-cite"
+                    :data-cite="part.index"
+                    :title="part.title"
+                  >{{ part.label }}</button>
+                  <template v-else>{{ part.text }}</template>
+                </template>
+              </div>
+              <div v-if="sourceCards(message).length" class="kb-sources">
+                <div class="kb-sources-label">{{ $t('assistant.sources') }}</div>
+                <div class="kb-sources-row">
+                  <button
+                    v-for="card in sourceCards(message)"
+                    :key="card.index"
+                    type="button"
+                    class="kb-source-card"
+                    @click="openReference(message, card.index)"
+                  >
+                    <span class="kb-source-preview">
+                      <img
+                        v-if="card.image_id && imageUrls[card.image_id]"
+                        :src="imageUrls[card.image_id]"
+                        :alt="fileLabel(card.document_name)"
+                      />
+                      <span v-else class="kb-source-excerpt">{{ excerpt(card.content) }}</span>
+                      <span class="kb-source-badge">{{ card.index + 1 }}</span>
+                    </span>
+                    <span class="kb-source-name" :title="sourceCaption(card)">{{ fileLabel(card.document_name) || $t('assistant.sourceUntitled') }}</span>
+                  </button>
+                </div>
+              </div>
               <div class="message-status" v-if="message.isPending">
                 <el-icon class="is-loading"><Loading /></el-icon> {{ $t('assistant.thinking') }}
               </div>
@@ -145,11 +182,34 @@
         </div>
       </div>
     </div>
+
+    <el-dialog
+      v-model="referenceVisible"
+      :title="activeReferenceTitle"
+      width="760px"
+      append-to-body
+      class="kb-reference-dialog"
+    >
+      <div v-if="activeReference" class="kb-reference-body">
+        <div class="kb-reference-meta">
+          <span>{{ fileLabel(activeReference.document_name) || $t('assistant.sourceUntitled') }}</span>
+          <span v-if="activeReference.page">{{ $t('assistant.sourcePage', { page: activeReference.page }) }}</span>
+        </div>
+        <img
+          v-if="activeReference.image_id && imageUrls[activeReference.image_id]"
+          class="kb-reference-image"
+          :src="imageUrls[activeReference.image_id]"
+          :alt="fileLabel(activeReference.document_name)"
+        />
+        <pre v-if="activeReference.content" class="kb-reference-text">{{ activeReference.content }}</pre>
+        <div v-else class="kb-reference-empty">{{ $t('assistant.sourceEmpty') }}</div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
@@ -168,6 +228,16 @@ const messages = ref([])
 const inputMessage = ref('')
 const sending = ref(false)
 const messagesContainer = ref(null)
+const imageUrls = ref({})
+const imageFailed = ref({})
+const loadingImages = new Set()
+const referenceVisible = ref(false)
+const activeReference = ref(null)
+
+const activeReferenceTitle = computed(() => {
+  const name = fileLabel(activeReference.value?.document_name)
+  return name || t('assistant.sources')
+})
 
 const handleCommand = (command) => {
   if (command === 'logout') {
@@ -197,9 +267,14 @@ const historySessionsDescending = computed(() => {
 })
 
 const isNewChatMode = computed(() => {
-  // 如果没有当前会话，或者当前会话没有消息且没有ID（临时会话），则显示新会话模式
-  return !currentSession.value || (!currentSession.value.id && messages.value.length === 0)
+  // 没有当前会话，或还没落到数据库的临时会话，显示欢迎页
+  return !currentSession.value?.id && messages.value.length === 0
 })
+
+const isSessionActive = (session) => {
+  const currentId = currentSession.value?.id
+  return currentId != null && session.id != null && currentId === session.id
+}
 
 // 方法
 const formatDate = (dateString) => {
@@ -214,13 +289,180 @@ const formatDate = (dateString) => {
   return date.toLocaleDateString(localeCode, { month: '2-digit', day: '2-digit' })
 }
 
-const formatMessageContent = (content) => {
-  if (!content) return ''
-  // 简单的 markdown 处理，实际项目中建议使用 markdown-it
-  return content
-    .replace(/\n/g, '<br>')
-    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
+const fileLabel = (name) => {
+  if (!name) return ''
+  const parts = String(name).split(/[/\\]/)
+  return parts[parts.length - 1]
+}
+
+const excerpt = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 72)
+
+const sourceCaption = (card) => {
+  const name = fileLabel(card.document_name) || t('assistant.sourceUntitled')
+  return card.page ? `${name} · ${t('assistant.sourcePage', { page: card.page })}` : name
+}
+
+const messageChunks = (message) => (
+  Array.isArray(message?.references) ? message.references : []
+)
+
+const findChunk = (chunks, index) => (
+  chunks.find(item => Number(item.index) === Number(index)) || null
+)
+
+const sourceCards = (message) => {
+  const chunks = messageChunks(message)
+  if (!chunks.length) return []
+  const cited = []
+  const push = (index) => {
+    const chunk = findChunk(chunks, index)
+    if (!chunk || cited.some(item => item.index === chunk.index)) return
+    cited.push(chunk)
+  }
+  const content = message.content || ''
+  const marker = /##(\d+)\$\$|\[ID:(\d+)\]/g
+  let match = marker.exec(content)
+  while (match) {
+    push(Number(match[1] ?? match[2]))
+    match = marker.exec(content)
+  }
+  const plain = /\[(\d+)\]/g
+  match = plain.exec(content)
+  while (match) {
+    const index = Number(match[1]) - 1
+    if (index >= 0) push(index)
+    match = plain.exec(content)
+  }
+  return cited.length ? cited : chunks.slice(0, 8)
+}
+
+const pushText = (parts, text) => {
+  if (!text) return
+  const lines = text.split('\n')
+  lines.forEach((line, lineIndex) => {
+    if (line) parts.push({ type: 'text', text: line })
+    if (lineIndex < lines.length - 1) parts.push({ type: 'break' })
+  })
+}
+
+const appendFormatted = (parts, text, cites) => {
+  const pattern = /`([^`]+)`|\uE000(\d+)\uE001/g
+  let cursor = 0
+  let found = pattern.exec(text)
+  while (found) {
+    if (found.index > cursor) pushText(parts, text.slice(cursor, found.index))
+    if (found[1] != null) parts.push({ type: 'code', text: found[1] })
+    else parts.push(cites[Number(found[2])])
+    cursor = found.index + found[0].length
+    found = pattern.exec(text)
+  }
+  if (cursor < text.length) pushText(parts, text.slice(cursor))
+}
+
+const messageParts = (message) => {
+  const content = message?.content
+  if (!content) return []
+  const chunks = messageChunks(message)
+  const cites = []
+  let source = content
+  if (chunks.length) {
+    source = source.replace(/##(\d+)\$\$|\[ID:(\d+)\]|\[(\d+)\]/g, (all, markerIndex, idIndex, label) => {
+      const index = label == null ? Number(markerIndex ?? idIndex) : Number(label) - 1
+      const chunk = findChunk(chunks, index)
+      if (!chunk) return all
+      const token = `\uE000${cites.length}\uE001`
+      cites.push({
+        type: 'cite',
+        index,
+        label: index + 1,
+        title: fileLabel(chunk.document_name) || t('assistant.sources'),
+      })
+      return token
+    })
+  } else {
+    source = source
+      .replace(/##(\d+)\$\$/g, (_, index) => `[${Number(index) + 1}]`)
+      .replace(/\[ID:(\d+)\]/g, (_, index) => `[${Number(index) + 1}]`)
+  }
+
+  const parts = []
+  const fence = /```([\s\S]*?)```/g
+  let last = 0
+  let match = fence.exec(source)
+  while (match) {
+    if (match.index > last) appendFormatted(parts, source.slice(last, match.index), cites)
+    const codeText = match[1]
+    const citeToken = /\uE000(\d+)\uE001/g
+    let codeCursor = 0
+    let citeMatch = citeToken.exec(codeText)
+    if (!citeMatch) {
+      parts.push({ type: 'codeblock', text: codeText })
+    } else {
+      while (citeMatch) {
+        if (citeMatch.index > codeCursor) {
+          parts.push({ type: 'codeblock', text: codeText.slice(codeCursor, citeMatch.index) })
+        }
+        parts.push(cites[Number(citeMatch[1])])
+        codeCursor = citeMatch.index + citeMatch[0].length
+        citeMatch = citeToken.exec(codeText)
+      }
+      if (codeCursor < codeText.length) parts.push({ type: 'codeblock', text: codeText.slice(codeCursor) })
+    }
+    last = match.index + match[0].length
+    match = fence.exec(source)
+  }
+  if (last < source.length || !parts.length) appendFormatted(parts, source.slice(last), cites)
+  return parts
+}
+
+const loadSourceImage = async (imageId) => {
+  if (!imageId || imageUrls.value[imageId] || imageFailed.value[imageId] || loadingImages.has(imageId)) return
+  loadingImages.add(imageId)
+  try {
+    const response = await api.get('/assistant/chat/reference_image/', {
+      params: { image_id: imageId },
+      responseType: 'blob',
+      timeout: 60000,
+    })
+    const mediaType = response.headers['content-type'] || ''
+    if (!mediaType.startsWith('image/')) {
+      imageFailed.value = { ...imageFailed.value, [imageId]: true }
+      return
+    }
+    imageUrls.value = {
+      ...imageUrls.value,
+      [imageId]: URL.createObjectURL(response.data),
+    }
+  } catch {
+    imageFailed.value = { ...imageFailed.value, [imageId]: true }
+  } finally {
+    loadingImages.delete(imageId)
+  }
+}
+
+const loadMessageImages = (list) => {
+  for (const message of list || []) {
+    for (const card of sourceCards(message)) {
+      if (card.image_id) loadSourceImage(card.image_id)
+    }
+  }
+}
+
+const openReference = (message, index) => {
+  const chunk = findChunk(messageChunks(message), Number(index))
+  if (!chunk) return
+  activeReference.value = chunk
+  referenceVisible.value = true
+  if (chunk.image_id) loadSourceImage(chunk.image_id)
+}
+
+const onMessagesClick = (event) => {
+  const button = event.target.closest?.('.kb-cite')
+  if (!button || !messagesContainer.value) return
+  const row = button.closest('.message-row')
+  const rows = messagesContainer.value.querySelectorAll('.message-row')
+  const message = messages.value[Array.from(rows).indexOf(row)]
+  if (message) openReference(message, button.dataset.cite)
 }
 
 const scrollToBottom = () => {
@@ -231,9 +473,9 @@ const scrollToBottom = () => {
   })
 }
 
-// 开启新会话
+// 开启新会话，并取消上一条会话的选中
 const startNewChat = () => {
-  currentSession.value = { title: t('assistant.newChat') } // 临时会话对象
+  currentSession.value = null
   messages.value = []
   inputMessage.value = ''
 }
@@ -385,9 +627,17 @@ const loadHistory = async () => {
   }
 }
 
+watch(messages, (list) => {
+  loadMessageImages(list)
+}, { deep: true })
+
 onMounted(() => {
   loadHistory()
   startNewChat()
+})
+
+onBeforeUnmount(() => {
+  Object.values(imageUrls.value).forEach((url) => URL.revokeObjectURL(url))
 })
 </script>
 
@@ -468,10 +718,6 @@ onMounted(() => {
       &:hover {
         background: rgba(255, 255, 255, 0.08);
         color: white;
-        
-        .session-actions {
-          opacity: 1;
-        }
       }
       
       &.active {
@@ -499,16 +745,21 @@ onMounted(() => {
       }
       
       .session-actions {
-        opacity: 0;
-        transition: opacity 0.2s;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
         
         .delete-icon {
-          font-size: 14px;
-          color: rgba(255, 255, 255, 0.45);
+          font-size: 16px;
+          color: rgba(255, 255, 255, 0.55);
           &:hover {
-            color: #ff4d4f;
+            color: #ff7875;
           }
         }
+      }
+
+      &.active .session-actions .delete-icon {
+        color: rgba(255, 255, 255, 0.92);
       }
     }
   }
@@ -718,6 +969,7 @@ onMounted(() => {
       
       &.assistant {
         .message-bubble {
+          max-width: min(880px, 88%);
           background: #f5f7fa;
           color: #303133;
           border-radius: 12px 12px 12px 0;
@@ -765,6 +1017,118 @@ onMounted(() => {
             font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
             font-size: 13px;
           }
+
+          :deep(.kb-cite) {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 16px;
+            height: 18px;
+            margin: 0 2px;
+            padding: 0 4px;
+            border: none;
+            border-radius: 4px;
+            background: #e8f3ff;
+            color: #1677ff;
+            font-size: 12px;
+            line-height: 18px;
+            cursor: pointer;
+            vertical-align: baseline;
+
+            &::before { content: '['; }
+            &::after { content: ']'; }
+
+            &:hover {
+              background: #1677ff;
+              color: #fff;
+            }
+          }
+        }
+
+        .kb-sources {
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px solid #e4e7ed;
+        }
+
+        .kb-sources-label {
+          margin-bottom: 8px;
+          font-size: 12px;
+          color: #909399;
+        }
+
+        .kb-sources-row {
+          display: flex;
+          gap: 10px;
+          overflow-x: auto;
+          padding-bottom: 4px;
+        }
+
+        .kb-source-card {
+          flex: 0 0 128px;
+          width: 128px;
+          padding: 0;
+          border: none;
+          background: transparent;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .kb-source-preview {
+          position: relative;
+          display: block;
+          height: 92px;
+          overflow: hidden;
+          border: 1px solid #e5e6eb;
+          border-radius: 6px;
+          background: #fff;
+
+          img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: top;
+          }
+        }
+
+        .kb-source-excerpt {
+          display: block;
+          height: 100%;
+          padding: 8px;
+          overflow: hidden;
+          color: #606266;
+          font-size: 11px;
+          line-height: 1.45;
+        }
+
+        .kb-source-badge {
+          position: absolute;
+          left: 6px;
+          bottom: 6px;
+          min-width: 18px;
+          height: 18px;
+          padding: 0 5px;
+          border-radius: 9px;
+          background: #f5222d;
+          color: #fff;
+          font-size: 12px;
+          line-height: 18px;
+          text-align: center;
+        }
+
+        .kb-source-name {
+          display: block;
+          margin-top: 4px;
+          overflow: hidden;
+          color: #909399;
+          font-size: 11px;
+          line-height: 1.3;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+        }
+
+        .kb-source-card:hover .kb-source-preview {
+          border-color: #1677ff;
         }
         
         .message-status {
@@ -825,6 +1189,51 @@ onMounted(() => {
       margin-top: 8px;
     }
   }
+}
+
+.kb-reference-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kb-reference-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #606266;
+  font-size: 13px;
+}
+
+.kb-reference-image {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  object-position: top;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.kb-reference-text {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  color: #303133;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.kb-reference-empty {
+  color: #909399;
+  font-size: 13px;
 }
 
 @keyframes rotating {

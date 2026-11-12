@@ -22,18 +22,21 @@ export default {
     locale: 'en-US'
   },
 
-  // Dify Configuration
+  // RAGFlow configuration (i18n key stays dify to avoid route churn)
   dify: {
     title: 'AI Reviewer Configuration',
-    description: 'Configure Dify API to enable AI reviewer functionality',
-    apiConfig: 'Dify API Configuration',
+    description: 'Configure the RAGFlow API to enable the AI reviewer',
+    apiConfig: 'RAGFlow API Configuration',
     apiUrl: 'API URL',
-    apiUrlPlaceholder: 'https://api.dify.ai/v1',
-    apiUrlTip: 'Complete URL of Dify API',
+    apiUrlPlaceholder: 'http://127.0.0.1:9380',
+    apiUrlTip: 'RAGFlow API address, usually http://127.0.0.1:9380',
     apiKey: 'API Key',
     apiKeyPlaceholder: 'Enter API Key',
     apiKeyPlaceholderEdit: 'Leave empty to keep current API Key',
-    apiKeyTip: 'API key obtained from Dify platform',
+    apiKeyTip: 'API key created from the avatar menu in the RAGFlow UI',
+    chatId: 'Chat ID',
+    chatIdPlaceholder: 'Enter the Chat Assistant ID',
+    chatIdTip: 'Copy the Assistant ID from your RAGFlow chat app. After a successful connection test, you can also pick it from the list.',
     enableStatus: 'Enable Status',
     testConnection: 'Test Connection',
     currentConfig: 'Current Configuration',
@@ -43,13 +46,14 @@ export default {
       saveSuccess: 'Configuration saved successfully!',
       updateSuccess: 'Configuration updated successfully!',
       saveFailed: 'Failed to save configuration',
-      apiKeyRequired: 'API Key is required when creating new configuration',
+      apiKeyRequired: 'API Key is required when creating a new configuration',
       loadFailed: 'Failed to load configuration'
     },
     validation: {
       apiUrlRequired: 'Please enter API URL',
       apiUrlInvalid: 'Please enter a valid URL',
-      apiKeyMinLength: 'API Key must be at least 8 characters'
+      apiKeyMinLength: 'API Key must be at least 8 characters',
+      chatIdRequired: 'Please enter the Chat Assistant ID'
     }
   },
 

@@ -76,7 +76,7 @@ export default {
     uiEnvConfig: 'UI Environment Configuration',
     aiModeConfig: 'AI Mode Configuration',
     scheduledTaskConfig: 'Scheduled Task Configuration',
-    difyConfig: 'Dify Configuration',
+    difyConfig: 'AI Reviewer Configuration',
 
     // Smart Judge
     judgeDashboard: 'Judge Dashboard',
