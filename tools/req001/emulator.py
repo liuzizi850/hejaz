@@ -23,6 +23,7 @@ from tools.req001.adb_utils import (
     subprocess_kwargs,
 )
 from tools.req001.errors import EnvNotReadyError
+from tools.req001.stdio import configure_stdio, safe_print
 
 DEFAULT_AVD_NAME = "REQ001_API34"
 DEFAULT_SYSTEM_IMAGE = "system-images;android-34;google_apis;x86_64"
@@ -312,53 +313,54 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--timeout", type=int, default=DEFAULT_BOOT_TIMEOUT, help="等待 boot 完成的秒数")
     parser.add_argument("--check-only", action="store_true", help="只检查环境与在线设备，不启动模拟器")
     args = parser.parse_args(list(argv) if argv is not None else None)
+    configure_stdio()
 
     layout = discover_sdk()
-    print(f"SDK 根目录: {layout.sdk_root or '未找到'}")
-    print(f"adb: {layout.adb or '未找到'}")
-    print(f"emulator: {layout.emulator or '未找到'}")
-    print(f"sdkmanager: {layout.sdkmanager or '未找到'}")
-    print(f"avdmanager: {layout.avdmanager or '未找到'}")
+    safe_print(f"SDK 根目录: {layout.sdk_root or '未找到'}")
+    safe_print(f"adb: {layout.adb or '未找到'}")
+    safe_print(f"emulator: {layout.emulator or '未找到'}")
+    safe_print(f"sdkmanager: {layout.sdkmanager or '未找到'}")
+    safe_print(f"avdmanager: {layout.avdmanager or '未找到'}")
     if layout.emulator:
         try:
             avds = list_avds(layout.emulator)
         except EnvNotReadyError as exc:
-            print(f"AVD 列表失败: {exc}")
+            safe_print(f"AVD 列表失败: {exc}")
             avds = []
-        print(f"AVD: {avds or '（无）'}")
+        safe_print(f"AVD: {avds or '（无）'}")
     if layout.adb:
         try:
             devices = list_devices(layout.adb)
-            print("adb 设备: " + (", ".join(f"{d.serial}({d.state})" for d in devices) or "（无）"))
+            safe_print("adb 设备: " + (", ".join(f"{d.serial}({d.state})" for d in devices) or "（无）"))
         except EnvNotReadyError as exc:
-            print(f"adb devices 失败: {exc}")
+            safe_print(f"adb devices 失败: {exc}")
 
     if args.check_only:
         if layout.adb is None:
-            print(_missing_tools_message(layout))
+            safe_print(_missing_tools_message(layout))
             return 2
         online = online_emulators(layout) if layout.adb else []
         if online:
-            print("已在线模拟器: " + ", ".join(d.serial for d in online))
+            safe_print("已在线模拟器: " + ", ".join(d.serial for d in online))
             return 0
         if layout.emulator is None:
-            print(_missing_tools_message(layout))
+            safe_print(_missing_tools_message(layout))
             return 2
-        print("当前没有在线模拟器。去掉 --check-only 可尝试拉起官方 AVD。")
+        safe_print("当前没有在线模拟器。去掉 --check-only 可尝试拉起官方 AVD。")
         return 0
 
     try:
         ready = ensure_emulator(avd_name=args.avd, timeout=args.timeout)
     except EnvNotReadyError as exc:
-        print(str(exc), file=sys.stderr)
+        safe_print(str(exc), file=sys.stderr)
         return 2
 
-    print(f"设备序列号: {ready.serial}")
-    print(f"是否复用已有模拟器: {'是' if ready.reused else '否'}")
-    print(f"AVD: {ready.avd_name or '（复用已有设备，未指定 AVD）'}")
-    print(f"boot_completed: {ready.boot_completed}")
+    safe_print(f"设备序列号: {ready.serial}")
+    safe_print(f"是否复用已有模拟器: {'是' if ready.reused else '否'}")
+    safe_print(f"AVD: {ready.avd_name or '（复用已有设备，未指定 AVD）'}")
+    safe_print(f"boot_completed: {ready.boot_completed}")
     for note in ready.notes:
-        print(note)
+        safe_print(note)
     return 0
 
 
