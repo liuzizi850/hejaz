@@ -12,6 +12,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence
 
+# Allow `python tools/req001/run_mvp.py` as well as module execution.
+_REPO = Path(__file__).resolve().parents[2]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+
 from tools.req001.ai_runner import Observer, run_scenario
 from tools.req001.app_fixture import AdbShell, resolve_target_app
 from tools.req001.bdd_parser import iter_scenarios, load_features
@@ -111,7 +117,4 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
-    repo = Path(__file__).resolve().parents[2]
-    if str(repo) not in sys.path:
-        sys.path.insert(0, str(repo))
     raise SystemExit(main())
