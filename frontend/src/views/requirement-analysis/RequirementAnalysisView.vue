@@ -253,12 +253,15 @@
           </div>
 
           <!-- 流式内容实时显示区域 -->
-          <div v-if="streamedContent" class="stream-content-display">
+          <div v-if="isGenerating || streamedContent" class="stream-content-display">
             <div class="stream-header">
               <span class="stream-title">{{ $t('requirementAnalysis.realtimeGeneratedContent') }}</span>
               <span class="stream-status">{{ $t('requirementAnalysis.characters', { count: streamedContent.length }) }}</span>
             </div>
-            <div class="stream-content" v-html="streamedContentHtml"></div>
+            <!-- 与原先同一处 Markdown 渲染，ref 只用于生成时滚到底部。 -->
+            <!-- nosemgrep: javascript.vue.security.audit.xss.templates.avoid-v-html.avoid-v-html -->
+            <div v-if="streamedContent" ref="liveStreamBox" class="stream-content" v-html="streamedContentHtml"></div>
+            <div v-else class="stream-waiting">{{ $t('requirementAnalysis.waitingModelOutput') }}</div>
           </div>
 
           <!-- 评审内容显示区域 -->
@@ -793,6 +796,10 @@ export default {
     },
 
     startStreamingProgress() {
+      // SSE 经过开发代理时可能被整段缓冲，页面会一直停在「任务创建成功」。
+      // 同时轮询进度接口，把已写入的正文直接画出来。
+      this.startPolling()
+
       // 使用SSE进行流式进度获取
       // 注意：EventSource不使用axios代理，需要直接指向后端服务器
       // 完整的URL路径: /api/requirement-analysis/testcase-generation/{task_id}/stream_progress/
@@ -822,21 +829,23 @@ export default {
               this.currentStep = 3
               this.progressText = `${this.$t('requirementAnalysis.statusRevising')} ${data.progress}%`
             }
-          } else if (data.type === 'content') {
-            // Real-time streaming content (case generation)
-            this.streamedContent += data.content
-            this.currentStep = 2
-            this.progressText = this.$t('requirementAnalysis.statusGenerating')
-          } else if (data.type === 'review_content') {
-            // Real-time review content
-            this.streamedReviewContent += data.content
-            this.currentStep = 3
-            this.progressText = this.$t('requirementAnalysis.statusReviewing')
-          } else if (data.type === 'final_content') {
-            // Real-time final test cases content
-            this.finalTestCases += data.content
-            this.currentStep = 3
-            this.progressText = '🎯 ' + this.$t('requirementAnalysis.statusRevising')
+          } else if (data.type === 'content' || data.type === 'review_content' || data.type === 'final_content') {
+            // 正文由进度轮询按数据库快照刷新。代理把 SSE 攒到结束再一次性吐出时，
+            // 再追加会和已显示的内容拼成两份。
+            if (this.pollInterval) return
+            if (data.type === 'content') {
+              this.streamedContent += data.content
+              this.currentStep = 2
+              this.progressText = this.$t('requirementAnalysis.statusGenerating')
+            } else if (data.type === 'review_content') {
+              this.streamedReviewContent += data.content
+              this.currentStep = 3
+              this.progressText = this.$t('requirementAnalysis.statusReviewing')
+            } else {
+              this.finalTestCases += data.content
+              this.currentStep = 3
+              this.progressText = '🎯 ' + this.$t('requirementAnalysis.statusRevising')
+            }
           } else if (data.type === 'status') {
             // Final status
             if (data.status === 'completed') {
@@ -964,22 +973,23 @@ export default {
     },
 
     startPolling() {
+      if (this.pollInterval) return
       // 兜底：若渲染定时器未启动（如从 SSE 降级到轮询），确保启动
       this.startRenderTimer()
-      this.pollInterval = setInterval(async () => {
-        try {
+      this.pollLiveProgress()
+      this.pollInterval = setInterval(() => this.pollLiveProgress(), 1000)
+    },
+
+    async pollLiveProgress() {
+      if (!this.currentTaskId || !this.isGenerating) return
+      try {
           // 修复URL：去掉多余的/api/前缀（axios baseURL已经包含/api）
           const response = await api.get(`/requirement-analysis/testcase-generation/${this.currentTaskId}/progress/`)
           const task = response.data
+          this.applyLiveSnapshot(task)
 
           // 更新进度显示
-          if (task.status === 'generating') {
-            this.currentStep = 2
-            this.progressText = this.$t('requirementAnalysis.statusGenerating')
-          } else if (task.status === 'reviewing') {
-            this.currentStep = 3
-            this.progressText = this.$t('requirementAnalysis.statusReviewing')
-          } else if (task.status === 'completed') {
+          if (task.status === 'completed') {
             this.currentStep = 4
             this.progressText = this.$t('requirementAnalysis.statusCompleted')
 
@@ -1004,6 +1014,10 @@ export default {
 
             clearInterval(this.pollInterval)
             this.pollInterval = null
+            if (this.eventSource) {
+              this.eventSource.close()
+              this.eventSource = null
+            }
 
             // 只显示一次完成消息
             if (!this.hasShownCompletionMessage) {
@@ -1026,7 +1040,33 @@ export default {
           console.error(this.$t('requirementAnalysis.checkProgressFailed'), error)
           // 继续轮询，不中断
         }
-      }, 3000) // 每3秒检查一次
+    },
+
+    applyLiveSnapshot(task) {
+      if (!task || task.status === 'completed' || task.status === 'failed') return
+      if (task.status === 'reviewing') {
+        this.currentStep = 3
+        this.progressText = this.$t('requirementAnalysis.statusReviewing')
+      } else if (task.status === 'revising') {
+        this.currentStep = 3
+        this.progressText = this.$t('requirementAnalysis.statusRevising')
+      } else if (task.status === 'generating' || (task.stream_buffer && task.stream_buffer.length)) {
+        this.currentStep = 2
+        this.progressText = this.$t('requirementAnalysis.statusGenerating')
+      }
+
+      const buffer = task.stream_buffer || ''
+      if (buffer.length >= (this.streamedContent || '').length) {
+        this.streamedContent = buffer
+      }
+      const review = task.review_feedback || ''
+      if (review.length >= (this.streamedReviewContent || '').length) {
+        this.streamedReviewContent = review
+      }
+      const finalText = task.final_test_cases || ''
+      if (finalText.length >= (this.finalTestCases || '').length) {
+        this.finalTestCases = finalText
+      }
     },
 
     cancelGeneration() {
@@ -1034,6 +1074,11 @@ export default {
         clearInterval(this.pollInterval)
         this.pollInterval = null
       }
+      if (this.eventSource) {
+        this.eventSource.close()
+        this.eventSource = null
+      }
+      this.stopRenderTimer()
       this.isGenerating = false
       this.currentTaskId = null
       ElMessage.info(this.$t('requirementAnalysis.generationCancelled'))
@@ -1216,6 +1261,10 @@ export default {
       if (this.finalTestCases.length !== lengths.final) {
         lengths.final = this.finalTestCases.length
         this.finalTestCasesHtml = this.formatMarkdown(this.finalTestCases)
+      }
+      if (this.isGenerating && this.$refs.liveStreamBox) {
+        const box = this.$refs.liveStreamBox
+        box.scrollTop = box.scrollHeight
       }
     },
 
@@ -2139,6 +2188,13 @@ export default {
   padding: 4px 10px;
   border-radius: 12px;
   border: 1px solid #dee2e6;
+}
+
+.stream-waiting {
+  padding: 16px;
+  color: #6c757d;
+  background: white;
+  font-size: 0.9rem;
 }
 
 .stream-content {

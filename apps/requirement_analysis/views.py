@@ -2016,6 +2016,7 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                 'task_id': task.task_id,
                 'status': task.status,
                 'progress': task.progress,
+                'stream_buffer': task.stream_buffer or '',
                 'generated_test_cases': task.generated_test_cases,
                 'review_feedback': task.review_feedback,
                 'final_test_cases': task.final_test_cases,
