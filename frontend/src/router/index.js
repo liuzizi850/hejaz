@@ -101,6 +101,12 @@ const routes = [
         ]
     },
     {
+        path: '/ai-run-share/:token',
+        name: 'AiRunShareReport',
+        component: () => import('@/views/app-automation/ai-run/ShareReport.vue'),
+        meta: { requiresAuth: false }
+    },
+    {
         path: '/login',
         name: 'Login',
         component: Login,
@@ -568,6 +574,12 @@ const routes = [
                 path: 'projects',
                 name: 'AppProjectList',
                 component: () => import('@/views/app-automation/projects/ProjectList.vue')
+            },
+            {
+                path: 'ai-run',
+                name: 'AppAiRun',
+                component: () => import('@/views/app-automation/ai-run/AiRun.vue'),
+                meta: { title: '执行与报告' }
             },
             {
                 path: 'devices',

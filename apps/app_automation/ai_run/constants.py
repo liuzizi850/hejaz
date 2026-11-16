@@ -1,0 +1,18 @@
+# -*- coding: utf-8 -*-
+"""Tester-safe messages for the REQ-002 execution page/API. No secrets or paths."""
+
+WORKER_NOT_READY = "执行服务未就绪"
+LLM_NOT_CONFIGURED = "系统未配置执行环境，请联系管理员"
+DEVICE_OFFLINE = "所选设备当前不在线，请确认设备已连接后重试"
+NO_CONNECTED_DEVICES = "当前没有已连接的设备，请待设备就绪后再刷新"
+DEVICE_LIST_UNAVAILABLE = "当前无法获取设备列表，请待设备就绪后再刷新，或联系管理员"
+DEVICE_LOCKED = "所选设备正在被占用，请稍后再试"
+NO_SCRIPTS_SELECTED = "请选择至少一条可执行脚本"
+SCRIPT_NOT_FOUND = "所选脚本不存在或无权使用"
+INVALID_FEATURE = "脚本无法解析，请检查是否为合法的 .feature 文件"
+INVALID_UPLOAD = "请上传扩展名为 .feature 的文本文件"
+RUN_NOT_FOUND = "执行记录不存在"
+REPORT_NOT_READY = "报告尚未生成"
+REPORT_MISSING = "报告文件不存在"
+INVALID_SHARE = "分享链接无效或报告不可用"
+PLATFORM_FAILED = "执行未能完成，请稍后重试或联系管理员"

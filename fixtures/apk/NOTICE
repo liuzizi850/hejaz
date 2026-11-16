@@ -1,0 +1,21 @@
+REQ-001 备选 APK 归属说明
+================================
+
+本目录收录的 APK 仅作为「设备上没有预装计算器」时的本地回退，供 REQ-001 MVP 夹具使用。
+
+名称: dahliaOS Calculator
+版本: 1.2.1（versionCode 21）
+许可证: Apache License 2.0（全文见同目录 LICENSE）
+作者: dahliaOS (contact@dahliaos.io)
+项目主页 / 源码: https://github.com/dahliaOS/calculator
+F-Droid 页面: https://f-droid.org/packages/io.dahliaos.calculator/
+APK 下载（F-Droid 仓库，验收不依赖再下载，文件已放入本目录）:
+  https://f-droid.org/repo/io.dahliaos.calculator_21.apk
+文件: io.dahliaos.calculator_21.apk
+SHA-256: 6dd75375e137e24384be6b7bcb1fac118cd2935494349fe48ff20a6bcf7ad73a
+
+声明:
+- 该应用无需登录、无需网络即可完成加减运算，声明无额外权限。
+- APK 声明的 ABI 包含 arm64-v8a、armeabi-v7a、x86_64，覆盖官方模拟器常见的 x86_64。
+- 包名不得写死在用例中。安装与启动时必须用 `aapt dump badging`（或等价方式）读取元数据中的 package name。
+- 本副本按 Apache-2.0 再分发，未修改 APK 内容。

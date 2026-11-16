@@ -805,3 +805,75 @@ export function getAppNotificationLogs(params) {
 export function retryAppNotification(id) {
   return request({ url: `/app-automation/notification-logs/${id}/retry/`, method: 'post' })
 }
+
+// ========== REQ-002 执行与报告 ==========
+
+function aiRunError(error) {
+  const data = error?.response?.data
+  let message = ''
+  if (data && typeof data === 'object' && !(data instanceof Blob) && data.message) {
+    message = data.message
+  } else if (typeof data === 'string') {
+    message = data
+  }
+  const err = new Error(message || '请求失败')
+  err.status = error?.response?.status
+  err.cause = error
+  return err
+}
+
+export function listAiRunScripts() {
+  return request({ url: '/app-automation/ai-runs/scripts/', method: 'get' })
+    .then((res) => res.data)
+    .catch((error) => { throw aiRunError(error) })
+}
+
+export function uploadAiRunScript(file) {
+  const data = new FormData()
+  data.append('file', file)
+  return request({
+    url: '/app-automation/ai-runs/scripts/upload/',
+    method: 'post',
+    data,
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }).then((res) => res.data).catch((error) => { throw aiRunError(error) })
+}
+
+export function listAiRunDevices() {
+  return request({ url: '/app-automation/ai-runs/devices/', method: 'get' })
+    .then((res) => res.data)
+    .catch((error) => { throw aiRunError(error) })
+}
+
+export function createAiRun(data) {
+  return request({ url: '/app-automation/ai-runs/runs/', method: 'post', data })
+    .then((res) => res.data)
+    .catch((error) => { throw aiRunError(error) })
+}
+
+export function getAiRun(id) {
+  return request({ url: `/app-automation/ai-runs/runs/${id}/`, method: 'get' })
+    .then((res) => res.data)
+    .catch((error) => { throw aiRunError(error) })
+}
+
+export function listAiRuns() {
+  return request({ url: '/app-automation/ai-runs/runs/', method: 'get' })
+    .then((res) => res.data)
+    .catch((error) => { throw aiRunError(error) })
+}
+
+export function downloadAiRunZip(id) {
+  return request({
+    url: `/app-automation/ai-runs/runs/${id}/download/`,
+    method: 'get',
+    responseType: 'blob'
+  }).then((res) => res.data).catch((error) => { throw aiRunError(error) })
+}
+
+export function createAiRunShare(id) {
+  return request({ url: `/app-automation/ai-runs/runs/${id}/share/`, method: 'post' })
+    .then((res) => res.data)
+    .catch((error) => { throw aiRunError(error) })
+}
+

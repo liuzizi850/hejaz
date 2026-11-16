@@ -1,0 +1,7 @@
+Source URL: https://f-droid.org/repo/io.dahliaos.calculator_21.apk
+Project: https://github.com/dahliaOS/calculator
+F-Droid: https://f-droid.org/packages/io.dahliaos.calculator/
+Version: 1.2.1 (21)
+License: Apache-2.0
+SHA-256: 6dd75375e137e24384be6b7bcb1fac118cd2935494349fe48ff20a6bcf7ad73a
+Retrieved: 2026-11-12

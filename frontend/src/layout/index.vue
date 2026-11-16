@@ -181,6 +181,10 @@
               <el-icon><Folder /></el-icon>
               <span>{{ $t('menu.projectManagement') }}</span>
             </el-menu-item>
+            <el-menu-item index="/app-automation/ai-run">
+              <el-icon><Finished /></el-icon>
+              <span>{{ $t('menu.aiRun') }}</span>
+            </el-menu-item>
             <el-menu-item index="/app-automation/devices">
               <el-icon><Cellphone /></el-icon>
               <span>{{ $t('menu.deviceManagement') }}</span>
@@ -590,6 +594,7 @@ const breadcrumbTitle = computed(() => {
     // APP自动化测试
     '/app-automation/dashboard': t('menu.dashboard'),
     '/app-automation/projects': t('menu.projectManagement'),
+    '/app-automation/ai-run': t('menu.aiRun'),
     '/app-automation/devices': t('menu.deviceManagement'),
     '/app-automation/packages': t('menu.packageManagement'),
     '/app-automation/elements': t('menu.elementManagement'),
