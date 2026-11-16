@@ -10,6 +10,14 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from tools.req001.actions import ActionResult, execute_action, validate_action
 from tools.req001.bdd_parser import Scenario, Step
 from tools.req001.errors import ActionError, LlmConfigError
+from tools.req001.exec_guards import (
+    RepeatClickGuard,
+    display_texts,
+    evaluate_calc_completion,
+    extract_calc_expectation,
+    hierarchy_fingerprint,
+    resolve_click_target,
+)
 from tools.req001.html_report import CaseResult
 from tools.req001.llm_client import OpenAICompatibleClient, parse_json_object
 from tools.req001.ui_observe import compact_nodes, dump_hierarchy_xml, parse_ui_hierarchy, take_screenshot
@@ -29,11 +37,11 @@ SYSTEM_PROMPT = """你是 Android UI 测试执行器。根据当前 BDD 步骤�
 
 规则：
 1. 被测应用包名由运行时提供，不要假设或编造其他包名。
-2. 优先点击层级里已有的可见文本（数字、+、=、等号、C 等）。
+2. 优先点击层级里已有的控件 text / content_desc / bounds（数字、+、=、等号、C 等），不要猜测坐标；不要点击显示结果的输入框。
 3. 不要规划一整条脚本，一次只返回下一步动作。按钮可能只有 content_desc 而没有 text，click 时应使用层级里的 text、content_desc 或 bounds。
-4. 当前步骤目标已达成时返回 step_done。
+4. 当前步骤目标已达成，或已识别到表达式和计算结果时，返回 step_done。
 5. 无法继续时返回 fail 并写明 reason。
-6. 禁止白名单之外的动作，禁止自主探索无关界面。
+6. 禁止白名单之外的动作，禁止自主探索无关界面。若上次点击后屏幕没有变化，不要再次点击同一坐标。
 """
 
 
@@ -114,39 +122,87 @@ def run_scenario(
         if path and Path(path).is_file():
             screenshots.append(str(path))
 
+    expectation = extract_calc_expectation(scenario)
+    click_guard = RepeatClickGuard(expression=expectation.expression if expectation else '')
+
+
+    def _fail(reason: str) -> CaseResult:
+        traces.append(reason)
+        return CaseResult(
+            case_id=scenario.case_id,
+            name=scenario.name,
+            status="fail",
+            failure_reason=reason,
+            screenshots=screenshots,
+            steps=traces,
+        )
+
+    def _pass() -> CaseResult:
+        return CaseResult(
+            case_id=scenario.case_id,
+            name=scenario.name,
+            status="pass",
+            failure_reason="",
+            screenshots=screenshots,
+            steps=traces,
+        )
+
     try:
         for step in scenario.steps:
             step_actions = 0
             while True:
                 if total_actions >= max_steps:
-                    reason = f"超过每条用例最大步数 {max_steps}，已停止"
-                    traces.append(reason)
-                    return CaseResult(
-                        case_id=scenario.case_id,
-                        name=scenario.name,
-                        status="fail",
-                        failure_reason=reason,
-                        screenshots=screenshots,
-                        steps=traces,
-                    )
+                    return _fail(f"超过每条用例最大步数 {max_steps}，已停止")
                 nodes, shot, compact = _dump()
                 _record_shot(shot)
+                fingerprint = hierarchy_fingerprint(nodes)
+                texts = display_texts(nodes)
+                click_guard.observe(fingerprint, display_text=texts[0] if texts else '')
+
+                completion = evaluate_calc_completion(scenario, step, nodes, history)
+                if completion.kind == "when_done":
+                    summary = f"{step.keyword} {step.text} -> step_done: {completion.message}"
+                    traces.append(summary)
+                    history.append(summary)
+                    total_actions += 1
+                    break
+                if completion.kind == "pass_case":
+                    summary = f"{step.keyword} {step.text} -> step_done: {completion.message}"
+                    traces.append(summary)
+                    history.append(summary)
+                    total_actions += 1
+                    return _pass()
+                if completion.kind == "fail_case":
+                    summary = f"{step.keyword} {step.text} -> assert_text: {completion.message}"
+                    traces.append(summary)
+                    history.append(summary)
+                    total_actions += 1
+                    return _fail(completion.message)
+
                 messages = _messages_for(step, history, compact, app_package, scenario.name)
                 raw = client.complete(messages)
                 try:
                     payload = parse_json_object(raw)
                     validate_action(payload)
                 except (ValueError, ActionError) as exc:
-                    reason = f"非法或不可解析动作: {exc}"
-                    traces.append(reason)
-                    return CaseResult(
-                        case_id=scenario.case_id,
-                        name=scenario.name,
-                        status="fail",
-                        failure_reason=reason,
-                        screenshots=screenshots,
-                        steps=traces,
-                    )
+                    return _fail(f"非法或不可解析动作: {exc}")
+
+                target = None
+                if str(payload.get("action") or "") == "click":
+                    target = resolve_click_target(payload, nodes)
+                    if target is not None and click_guard.blocks((target.x, target.y), label=target.label):
+                        result = ActionResult(
+                            ok=False,
+                            message=click_guard.reject_message((target.x, target.y), label=target.label),
+                            click_xy=(target.x, target.y),
+                        )
+                        total_actions += 1
+                        step_actions += 1
+                        summary = f"{step.keyword} {step.text} -> click: {result.message}"
+                        traces.append(summary)
+                        history.append(summary)
+                        continue
+
                 try:
                     result = _exec(payload, nodes)
                 except ActionError as exc:
@@ -156,26 +212,17 @@ def run_scenario(
                 summary = f"{step.keyword} {step.text} -> {payload.get('action')}: {result.message}"
                 traces.append(summary)
                 history.append(summary)
+                click_xy = result.click_xy
+                if click_xy is None and target is not None:
+                    click_xy = (target.x, target.y)
+                if str(payload.get("action") or "") == "click" and result.ok and click_xy:
+                    click_guard.record_click(click_xy, label=(target.label if target is not None else ''))
                 if result.step_done:
                     break
                 if result.assertion_failed or result.abort:
-                    return CaseResult(
-                        case_id=scenario.case_id,
-                        name=scenario.name,
-                        status="fail",
-                        failure_reason=result.message or "步骤失败",
-                        screenshots=screenshots,
-                        steps=traces,
-                    )
+                    return _fail(result.message or "步骤失败")
                 # Recoverable action failures (e.g. a missed click) stay in the step loop.
-        return CaseResult(
-            case_id=scenario.case_id,
-            name=scenario.name,
-            status="pass",
-            failure_reason="",
-            screenshots=screenshots,
-            steps=traces,
-        )
+        return _pass()
     except LlmConfigError:
         raise
     except Exception as exc:

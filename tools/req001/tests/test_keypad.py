@@ -52,40 +52,38 @@ def test_ensure_keypad_ok_without_recovery():
 
 
 def test_ensure_keypad_relaunches_app_when_blank():
-    state = {"n": 0}
+    state = {"relaunched": False}
 
     def dump():
-        state["n"] += 1
-        if state["n"] == 1:
+        if not state["relaunched"]:
             return _nodes("DEG")
         return _nodes("1", "+", "=")
 
     relaunched = {"ok": False}
 
     def relaunch():
+        state["relaunched"] = True
         relaunched["ok"] = True
 
-    result = ensure_keypad_ready(dump, relaunch_fn=relaunch, reboot_fn=lambda: (_ for _ in ()).throw(AssertionError("reboot should not run")))
+    result = ensure_keypad_ready(dump, relaunch_fn=relaunch, reboot_fn=lambda: (_ for _ in ()).throw(AssertionError("reboot should not run")), sleep_fn=lambda _seconds: None)
     assert relaunched["ok"] is True
     assert result.visible is True
     assert result.recovered_by == "app_relaunch"
 
 
 def test_ensure_keypad_reboots_emulator_if_relaunch_not_enough():
-    state = {"n": 0}
+    calls = []
 
     def dump():
-        state["n"] += 1
-        if state["n"] < 3:
-            return _nodes("DEG")
-        return _nodes("1", "+", "=")
-
-    calls = []
+        if "emu" in calls:
+            return _nodes("1", "+", "=")
+        return _nodes("DEG")
 
     result = ensure_keypad_ready(
         dump,
         relaunch_fn=lambda: calls.append("app"),
         reboot_fn=lambda: calls.append("emu"),
+        sleep_fn=lambda _seconds: None,
     )
     assert calls == ["app", "emu"]
     assert result.visible is True
@@ -97,7 +95,81 @@ def test_ensure_keypad_gives_clear_hint_when_still_blank():
         lambda: _nodes("DEG"),
         relaunch_fn=lambda: None,
         reboot_fn=lambda: None,
+        sleep_fn=lambda _seconds: None,
     )
     assert result.visible is False
     assert "重启模拟器" in result.message
     assert result.message == KEYPAD_MISSING_HINT
+
+def test_ensure_keypad_hint_omits_emulator_reboot_when_reboot_forbidden():
+    result = ensure_keypad_ready(
+        lambda: _nodes("DEG"),
+        relaunch_fn=lambda: None,
+        reboot_fn=None,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert result.visible is False
+    assert "重启模拟器" not in result.message
+    assert "键区" in result.message
+
+
+def test_ensure_keypad_hint_omits_emulator_reboot_for_physical_device():
+    result = ensure_keypad_ready(
+        lambda: _nodes("DEG"),
+        relaunch_fn=lambda: None,
+        reboot_fn=lambda: None,
+        is_emulator=False,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert result.visible is False
+    assert "重启模拟器" not in result.message
+    assert "键区" in result.message
+
+
+def test_ensure_keypad_retries_blank_render_before_relaunch():
+    state = {"n": 0}
+
+    def dump():
+        state["n"] += 1
+        if state["n"] < 3:
+            return _nodes("DEG")
+        return _nodes("1", "+", "=")
+
+    relaunched = {"ok": False}
+
+    def relaunch():
+        relaunched["ok"] = True
+        raise AssertionError("relaunch should wait for late keypad render")
+
+    result = ensure_keypad_ready(dump, relaunch_fn=relaunch, reboot_fn=None, sleep_fn=lambda _seconds: None)
+    assert result.visible is True
+    assert relaunched["ok"] is False
+    assert state["n"] == 3
+    assert result.recovered_by in {"", "retry"}
+
+
+def test_ensure_keypad_retries_after_relaunch_for_late_render():
+    state = {"n": 0, "relaunched": False, "after": 0}
+
+    def dump():
+        state["n"] += 1
+        if not state["relaunched"]:
+            return _nodes("DEG")
+        # First dump after relaunch is still blank (orientation / render lag).
+        if state["after"] == 0:
+            state["after"] += 1
+            return _nodes("DEG")
+        return _nodes("1", "+", "=")
+
+    def relaunch():
+        state["relaunched"] = True
+
+    result = ensure_keypad_ready(
+        dump,
+        relaunch_fn=relaunch,
+        reboot_fn=lambda: (_ for _ in ()).throw(AssertionError("reboot should not run")),
+        sleep_fn=lambda _seconds: None,
+    )
+    assert state["relaunched"] is True
+    assert result.visible is True
+    assert result.recovered_by == "app_relaunch"

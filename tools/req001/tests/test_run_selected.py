@@ -183,3 +183,60 @@ def test_successful_fixture_writes_report_with_screenshot(tmp_path):
     assert result.cases[0].screenshots
     assert all(not Path(s).is_absolute() for s in result.cases[0].screenshots)
     assert "screenshots/" in result.cases[0].screenshots[0]
+
+def test_physical_device_does_not_get_reboot_fn_even_when_allowed(tmp_path):
+    seen = {}
+
+    def checker(*args, **kwargs):
+        seen["reboot_fn"] = kwargs.get("reboot_fn")
+        if "reboot_fn" not in kwargs and len(args) >= 3:
+            seen["reboot_fn"] = args[2]
+        seen["is_emulator"] = kwargs.get("is_emulator")
+        return KeypadReady(True, "", "ok")
+
+    def fake_run(scenario, **kwargs):
+        return CaseResult(case_id=scenario.case_id, name=scenario.name, status="pass")
+
+    result = run_selected(
+        "ABCD1234",
+        [_feature(tmp_path)],
+        tmp_path / "out",
+        list_devices_fn=lambda: _online("ABCD1234"),
+        llm_client=_client(),
+        adb=Path("adb"),
+        resolve_app_fn=lambda shell: _app(),
+        run_scenario_fn=fake_run,
+        keypad_check_fn=checker,
+        allow_device_reboot=True,
+    )
+    assert result.ok is True
+    assert seen["reboot_fn"] is None
+    assert seen["is_emulator"] is False
+
+
+def test_emulator_still_gets_reboot_fn_when_allowed(tmp_path):
+    seen = {}
+
+    def checker(*args, **kwargs):
+        seen["reboot_fn"] = kwargs.get("reboot_fn")
+        seen["is_emulator"] = kwargs.get("is_emulator")
+        return KeypadReady(True, "", "ok")
+
+    def fake_run(scenario, **kwargs):
+        return CaseResult(case_id=scenario.case_id, name=scenario.name, status="pass")
+
+    result = run_selected(
+        "emulator-5554",
+        [_feature(tmp_path)],
+        tmp_path / "out",
+        list_devices_fn=lambda: _online("emulator-5554"),
+        llm_client=_client(),
+        adb=Path("adb"),
+        resolve_app_fn=lambda shell: _app(),
+        run_scenario_fn=fake_run,
+        keypad_check_fn=checker,
+        allow_device_reboot=True,
+    )
+    assert result.ok is True
+    assert seen["reboot_fn"] is not None
+    assert seen["is_emulator"] is True
