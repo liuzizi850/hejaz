@@ -98,7 +98,7 @@ export default {
     appAutomationDesc: '基于Airtest的Android APP自动化测试',
     aiIntelligentMode: 'AI 智能模式',
     aiIntelligentModeDesc: '基于自然语言的智能化测试执行',
-    aiEvaluator: 'AI评测师',
+    aiEvaluator: 'AI 问答',
     aiEvaluatorDesc: '基于评测师知识库，提供专业软件测试问答',
     configCenter: '配置中心',
     configCenterDesc: '系统环境、AI模型及通知配置',

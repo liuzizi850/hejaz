@@ -24,8 +24,8 @@ export default {
 
   // RAGFlow 配置（i18n key 仍为 dify，避免大面积改路由）
   dify: {
-    title: 'AI评测师配置',
-    description: '配置 RAGFlow API 以启用 AI 评测师功能',
+    title: 'AI 问答配置',
+    description: '配置 RAGFlow API 以启用 AI 问答功能',
     apiConfig: 'RAGFlow API 配置',
     apiUrl: 'API URL',
     apiUrlPlaceholder: 'http://127.0.0.1:9380',
