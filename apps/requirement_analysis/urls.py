@@ -1,5 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from .quality_review_views import RequirementQualityReviewViewSet
+from .requirement_writer_views import RequirementDraftViewSet
 from .views import (
     RequirementDocumentViewSet,
     RequirementAnalysisViewSet,
@@ -27,6 +29,8 @@ router.register(r'prompts', PromptConfigViewSet, basename='promptconfig')
 router.register(r'generation-config', GenerationConfigViewSet, basename='generationconfig')
 router.register(r'testcase-generation', TestCaseGenerationTaskViewSet, basename='testcasegenerationtask')
 router.register(r'config', ConfigStatusViewSet, basename='configstatus')
+router.register(r'quality-reviews', RequirementQualityReviewViewSet, basename='requirementqualityreview')
+router.register(r'drafts', RequirementDraftViewSet, basename='requirementdraft')
 
 app_name = 'requirement_analysis'
 

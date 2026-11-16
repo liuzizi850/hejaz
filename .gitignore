@@ -104,3 +104,7 @@ artifacts/req001/*
 # REQ-002 uploads and hosted reports (do not commit tester uploads or run artifacts)
 artifacts/req002/*
 !artifacts/req002/.gitkeep
+
+# Local AI commit review key (never commit)
+.commit-review.env
+

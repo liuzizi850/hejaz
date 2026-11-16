@@ -139,6 +139,16 @@ const routes = [
                 component: () => import('@/views/requirement-analysis/RequirementAnalysisView.vue')
             },
             {
+                path: 'requirement-writing',
+                name: 'RequirementWriting',
+                component: () => import('@/views/requirement-analysis/RequirementWriting.vue')
+            },
+            {
+                path: 'requirement-quality',
+                name: 'RequirementQualityReview',
+                component: () => import('@/views/requirement-analysis/RequirementQualityReview.vue')
+            },
+            {
                 path: 'projects',
                 name: 'Projects',
                 component: ProjectList

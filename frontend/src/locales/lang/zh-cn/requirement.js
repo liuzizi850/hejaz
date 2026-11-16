@@ -79,6 +79,7 @@ export default {
     generationFailed: '❌ 生成失败',
     creatingTask: '正在创建生成任务...',
     taskCreated: '任务创建成功，开始生成...',
+    waitingModelOutput: '模型正在输出，文字会显示在这里...',
     preparing: '准备中...',
 
     // Generation Status

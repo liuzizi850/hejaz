@@ -4,13 +4,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment
 
 from apps.code_monitor.extract import EXCEL_HEADERS, ApiRow
-from apps.code_monitor.review import OMISSION_LABEL, VERDICT_LABEL, VULN_LABEL, summary_counts
 from apps.code_monitor.sample_data import render_request_sample
 from apps.code_monitor.test_points import render_test_points
 
 
 def _excel_text(value: str) -> str:
-    if value[:1] in "=+-@":
+    if value.startswith(("=", "+", "-", "@")):
         return "'" + value
     return value
 
@@ -41,73 +40,55 @@ def write_api_workbook(rows: list[ApiRow]) -> bytes:
     return buffer.getvalue()
 
 
-PRIORITY_HEADERS = ["编号", "需求点", "代码情况", "测试建议", "建议优先级", "位置", "说明"]
-OMISSION_HEADERS = ["编号", "需求点", "缺口类型", "缺口", "前置条件", "步骤要点", "预期", "位置"]
-VULN_HEADERS = ["编号", "需求点", "风险类型", "风险", "怎么测", "预期", "位置"]
+FILTER_HEADERS = ["需求", "操作", "遗漏点"]
+_NOT_SEEN = ("未出现", "未涉及", "未检索到", "没有找到", "无法判断", "对不上", "无法从给定片段判断")
+
+
+def _operation(steps: str, gap: str) -> str:
+    text = (steps or "").strip()
+    if not text or text == gap:
+        return "按该需求操作"
+    return text
 
 
 def write_review_workbook(report) -> bytes:
     workbook = Workbook()
-    summary = workbook.active
-    summary.title = "汇总"
-    counts = summary_counts(report.findings)
-    rows = [
-        ("需求原文", report.requirement),
-        ("检查点总数", counts["total"]),
-        ("建议优先测试", counts["high"]),
-        ("可少测的主流程", counts["light"]),
-        ("待确认未实现", counts["missing"]),
-        ("安全测试点", counts["vulnerabilities"]),
-        ("无法检查", counts["uncheckable"]),
-    ]
-    summary.append(["项目", "内容"])
-    for label, value in rows:
-        summary.append([label, value if isinstance(value, int) else _excel_text(str(value))])
-    for cell in summary["B"]:
-        cell.alignment = Alignment(wrap_text=True, vertical="top")
-    summary.column_dimensions["A"].width = 20
-    summary.column_dimensions["B"].width = 80
-
-    priority = workbook.create_sheet("测试优先级")
-    priority.append(PRIORITY_HEADERS)
-    supplement = workbook.create_sheet("补测用例")
-    supplement.append(OMISSION_HEADERS)
-    security = workbook.create_sheet("安全测试点")
-    security.append(VULN_HEADERS)
+    sheet = workbook.active
+    sheet.title = "测试过滤"
+    sheet.append(FILTER_HEADERS)
     for finding in report.findings:
-        priority.append([
-            finding.number,
-            _excel_text(finding.text),
-            VERDICT_LABEL.get(finding.verdict, finding.verdict),
-            _excel_text(finding.advice),
-            finding.priority,
-            _excel_text(finding.evidence_path),
-            _excel_text(finding.evidence_note),
-        ])
+        wrote = False
         for item in finding.omissions:
-            supplement.append([
-                finding.number,
+            sheet.append([
                 _excel_text(finding.text),
-                OMISSION_LABEL.get(item.kind, item.kind),
+                _excel_text(_operation(item.steps, item.gap)),
                 _excel_text(item.gap),
-                _excel_text(item.precondition),
-                _excel_text(item.steps),
-                _excel_text(item.expected),
-                _excel_text(item.path),
             ])
+            wrote = True
         for item in finding.vulnerabilities:
-            security.append([
-                finding.number,
+            sheet.append([
                 _excel_text(finding.text),
-                VULN_LABEL.get(item.kind, item.kind),
+                "做该需求相关操作时",
                 _excel_text(item.risk),
-                _excel_text(item.how_to_test),
-                _excel_text(item.expected),
-                _excel_text(item.path),
             ])
-    for sheet in (priority, supplement, security):
-        sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = sheet.dimensions
+            wrote = True
+        if not wrote and finding.verdict in {"contradict", "partial"}:
+            note = finding.evidence_note or finding.advice or ""
+            if note and not any(mark in note for mark in _NOT_SEEN):
+                sheet.append([
+                    _excel_text(finding.text),
+                    "按该需求操作",
+                    _excel_text(note),
+                ])
+    if sheet.max_row == 1:
+        sheet.append(["", "按需求过一遍", "没有看出明显遗漏"])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for column, width in {"A": 36, "B": 36, "C": 48}.items():
+        sheet.column_dimensions[column].width = width
+    for cells in sheet.iter_rows(min_row=2, max_col=3):
+        for cell in cells:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()

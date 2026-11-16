@@ -197,6 +197,145 @@ class AnalysisTask(models.Model):
         return f"{self.task_id} - {self.get_task_type_display()}"
 
 
+class RequirementQualityReview(models.Model):
+    """需求质量审查：完整性、一致性、可测性。"""
+
+    STATUS_COMPLETED = "completed"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [
+        (STATUS_COMPLETED, "已完成"),
+        (STATUS_FAILED, "失败"),
+    ]
+
+    VERDICT_PASS = "pass"
+    VERDICT_REVISE = "revise"
+    VERDICT_BLOCK = "block"
+    VERDICT_CHOICES = [
+        (VERDICT_PASS, "可通过"),
+        (VERDICT_REVISE, "需修改"),
+        (VERDICT_BLOCK, "拦截"),
+    ]
+
+    title = models.CharField(max_length=200, verbose_name="需求标题")
+    source_text = models.TextField(verbose_name="审查所用正文")
+    document = models.ForeignKey(
+        RequirementDocument,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="quality_reviews",
+        verbose_name="关联文档",
+    )
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="requirement_quality_reviews",
+        verbose_name="关联项目",
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="requirement_quality_reviews",
+        verbose_name="创建者",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_COMPLETED,
+        verbose_name="状态",
+    )
+    verdict = models.CharField(max_length=20, choices=VERDICT_CHOICES, blank=True, verbose_name="结论")
+    completeness_score = models.PositiveSmallIntegerField(default=0, verbose_name="完整性")
+    consistency_score = models.PositiveSmallIntegerField(default=0, verbose_name="一致性")
+    testability_score = models.PositiveSmallIntegerField(default=0, verbose_name="可测性")
+    overall_score = models.PositiveSmallIntegerField(default=0, verbose_name="综合分")
+    summary = models.TextField(blank=True, verbose_name="结论说明")
+    findings = models.JSONField(default=list, blank=True, verbose_name="问题列表")
+    input_truncated = models.BooleanField(default=False, verbose_name="正文已截断")
+    model_name = models.CharField(max_length=100, blank=True, verbose_name="使用的模型")
+    error_message = models.TextField(blank=True, verbose_name="错误信息")
+    created_at = models.DateTimeField(default=timezone.now, verbose_name="创建时间")
+
+    class Meta:
+        db_table = "requirement_quality_reviews"
+        verbose_name = "需求质量审查"
+        verbose_name_plural = "需求质量审查"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.title} - {self.get_verdict_display() or self.get_status_display()}"
+
+
+class RequirementDraft(models.Model):
+    """把散乱输入整理成的需求草稿。定稿前不写入需求文档。"""
+
+    STATUS_COMPLETED = "completed"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [
+        (STATUS_COMPLETED, "已完成"),
+        (STATUS_FAILED, "失败"),
+    ]
+
+    title = models.CharField(max_length=200, verbose_name="需求标题")
+    source_text = models.TextField(verbose_name="原始输入")
+    document_markdown = models.TextField(blank=True, verbose_name="需求文档")
+    sections = models.JSONField(default=dict, blank=True, verbose_name="章节")
+    acceptance_criteria = models.JSONField(default=list, blank=True, verbose_name="验收标准")
+    open_questions = models.JSONField(default=list, blank=True, verbose_name="待确认")
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="requirement_drafts",
+        verbose_name="关联项目",
+    )
+    document = models.ForeignKey(
+        RequirementDocument,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="drafts",
+        verbose_name="定稿文档",
+    )
+    latest_review = models.ForeignKey(
+        RequirementQualityReview,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="source_drafts",
+        verbose_name="最近一次审查",
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="requirement_drafts",
+        verbose_name="创建者",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_COMPLETED,
+        verbose_name="状态",
+    )
+    input_truncated = models.BooleanField(default=False, verbose_name="原文已截断")
+    model_name = models.CharField(max_length=100, blank=True, verbose_name="使用的模型")
+    error_message = models.TextField(blank=True, verbose_name="错误信息")
+    created_at = models.DateTimeField(default=timezone.now, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = "requirement_drafts"
+        verbose_name = "需求撰写草稿"
+        verbose_name_plural = "需求撰写草稿"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.title} - {self.get_status_display()}"
+
+
 class AIModelConfig(models.Model):
     """AI模型配置模型"""
     MODEL_CHOICES = [
@@ -464,7 +603,8 @@ class AIModelService:
     async def call_openai_compatible_api(
             config: AIModelConfig,
             messages: List[Dict[str, str]],
-            max_tokens: int = None
+            max_tokens: int = None,
+            temperature: float = None,
     ) -> Dict[str, Any]:
         """
         调用OpenAI兼容格式的API
@@ -473,6 +613,7 @@ class AIModelService:
             config: AI模型配置
             messages: 消息列表
             max_tokens: 可选的最大token数，如果不指定则使用config.max_tokens
+            temperature: 可选温度。不传时使用配置里的温度。
 
         Returns:
             API响应字典
@@ -481,12 +622,13 @@ class AIModelService:
 
         # 使用传入的max_tokens或默认使用config.max_tokens
         actual_max_tokens = max_tokens if max_tokens is not None else config.max_tokens
+        actual_temperature = config.temperature if temperature is None else temperature
 
         data = {
             'model': config.model_name,
             'messages': messages,
             'max_tokens': actual_max_tokens,
-            'temperature': config.temperature,
+            'temperature': actual_temperature,
             'top_p': config.top_p,
             'stream': False
         }

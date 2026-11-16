@@ -24,6 +24,8 @@ export default {
     // AI用例生成
     intelligentCaseGeneration: '智能用例生成',
     aiCaseGeneration: 'AI用例生成',
+    requirementWriting: '需求文档撰写',
+    requirementQualityReview: '需求质量审查',
     aiGeneratedTestcases: 'AI生成用例记录',
     promptConfig: '提示词配置',
     projectManagement: '项目管理',

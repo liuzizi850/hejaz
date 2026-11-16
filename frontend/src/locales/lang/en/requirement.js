@@ -79,6 +79,7 @@ export default {
     generationFailed: '❌ Generation Failed',
     creatingTask: 'Creating generation task...',
     taskCreated: 'Task created, starting generation...',
+    waitingModelOutput: 'The model is writing. Text will show up here...',
     preparing: 'Preparing...',
 
     // Generation Status
