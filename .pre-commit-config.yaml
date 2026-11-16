@@ -13,3 +13,12 @@ repos:
           - --exclude-rule=python.lang.compatibility.python36.python36-compatibility-Popen2
           # 全局限流会改变现有接口行为，不在本次提交里打开。
           - --exclude-rule=python.django.security.audit.django-rest-framework.missing-throttle-config.missing-throttle-config
+  - repo: local
+    hooks:
+      - id: commit-business-review
+        name: AI business review (advisory)
+        entry: py -3.12 -X utf8 scripts/git_commit_review.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true
