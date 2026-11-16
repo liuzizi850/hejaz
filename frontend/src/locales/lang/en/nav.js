@@ -24,6 +24,8 @@ export default {
     // AI Test Case Generation
     intelligentCaseGeneration: 'Intelligent Case Generation',
     aiCaseGeneration: 'AI Case Generation',
+    requirementWriting: 'Requirement Writing',
+    requirementQualityReview: 'Requirement Quality Review',
     aiGeneratedTestcases: 'AI Generated Test Cases',
     promptConfig: 'Prompt Configuration',
     projectManagement: 'Project Management',

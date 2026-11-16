@@ -7,7 +7,7 @@ from django.core.files.base import ContentFile
 from openpyxl import load_workbook
 
 from apps.code_monitor.batching import FileChunk
-from apps.code_monitor.excel_export import OMISSION_HEADERS, PRIORITY_HEADERS, VULN_HEADERS, write_review_workbook
+from apps.code_monitor.excel_export import FILTER_HEADERS, write_review_workbook
 from apps.code_monitor.models import ScanTask
 from apps.code_monitor.pipeline import execute_scan
 from apps.code_monitor.review import (
@@ -49,6 +49,51 @@ def test_missing_code_does_not_ask_the_model(tmp_path, monkeypatch):
     assert report.findings[0].evidence_note == "未检索到相关代码"
     assert report.findings[0].advice == "先跟开发确认未实现"
     assert report.findings[0].priority == "中"
+
+
+def test_backend_code_skips_page_appearance(tmp_path, monkeypatch):
+    (tmp_path / "Wallet.java").write_text("class Wallet { int balance; }\n", encoding="utf-8")
+
+    def fake_call(config, system, user):
+        if "拆成检查点" in system:
+            assert "当前只有后端代码" in user
+            return json.dumps([
+                {"text": "冻结余额用红字显示", "checkable": True, "reason": ""},
+                {"text": "点击跳转到冻结列表", "checkable": True, "reason": ""},
+                {"text": "购票时校验可用余额", "checkable": True, "reason": ""},
+            ])
+        assert "校验可用余额" in user
+        assert "红字" not in user
+        return json.dumps({
+            "verdict": "partial",
+            "evidence_file": "Wallet.java",
+            "evidence_note": "有余额字段",
+            "omissions": [
+                {"kind": "validation", "gap": "未校验余额是否足够", "steps": "购票", "evidence_file": "Wallet.java"},
+                {"kind": "validation", "gap": "余额没有用红字显示", "steps": "打开首页", "evidence_file": "Wallet.java"},
+            ],
+        })
+
+    monkeypatch.setattr("apps.code_monitor.review.call_model", fake_call)
+    report = review_repository(None, tmp_path, "余额用红字显示，点击可跳转，购票要校验余额")
+    assert report.findings[0].verdict == "uncheckable"
+    assert report.findings[1].verdict == "uncheckable"
+    assert [item.gap for item in report.findings[2].omissions] == ["未校验余额是否足够"]
+
+
+def test_frontend_code_still_checks_appearance(tmp_path, monkeypatch):
+    (tmp_path / "Home.vue").write_text("<template><p class=\"red\">余额</p></template>\n", encoding="utf-8")
+
+    def fake_call(config, system, user):
+        if "拆成检查点" in system:
+            assert "当前只有后端代码" not in user
+            return json.dumps([{"text": "冻结余额用红字显示", "checkable": True, "reason": ""}])
+        assert "红字" in user
+        return json.dumps({"verdict": "missing", "evidence_note": "没有样式"})
+
+    monkeypatch.setattr("apps.code_monitor.review.call_model", fake_call)
+    finding = review_repository(None, tmp_path, "冻结余额用红字显示").findings[0]
+    assert finding.verdict == "missing"
 
 
 def test_uncheckable_point_skips_code(tmp_path, monkeypatch):
@@ -141,6 +186,16 @@ def test_regex_secret_is_kept_once():
     assert finding.advice == "主流程抽一条即可，并补安全测试"
 
 
+def test_activity_requirement_retrieves_event_code(tmp_path):
+    (tmp_path / "EventService.java").write_text(
+        "class EventService {\n  void createEvent() { save(event); }\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Wallet.java").write_text("class Wallet { int balance; }\n", encoding="utf-8")
+    snippets = retrieve_snippets(build_index(tmp_path), "活动创建成功后，生成唯一活动 ID 并落库存储")
+    assert [item.source_file for item in snippets] == ["EventService.java"]
+
+
 def test_review_workbook_is_for_testers():
     report = ReviewReport(
         requirement="=导入公式",
@@ -159,18 +214,28 @@ def test_review_workbook_is_for_testers():
         ],
     )
     workbook = load_workbook(io.BytesIO(write_review_workbook(report)))
-    assert workbook.sheetnames == ["汇总", "测试优先级", "补测用例", "安全测试点"]
-    summary = workbook["汇总"]
-    assert summary["B2"].value == "'=导入公式"
-    assert [cell.value for cell in workbook["测试优先级"][1]] == PRIORITY_HEADERS
-    assert workbook["测试优先级"]["C2"].value == "部分实现"
-    assert workbook["测试优先级"]["E2"].value == "高"
-    assert [cell.value for cell in workbook["补测用例"][1]] == OMISSION_HEADERS
-    assert workbook["补测用例"]["D2"].value == "密码错误没有锁定"
-    assert workbook["补测用例"]["G2"].value == "账号被锁定"
-    assert [cell.value for cell in workbook["安全测试点"][1]] == VULN_HEADERS
-    assert workbook["安全测试点"]["C2"].value == "硬编码密钥"
-    assert workbook["安全测试点"]["E2"].value == "搜索响应"
+    assert workbook.sheetnames == ["测试过滤"]
+    sheet = workbook["测试过滤"]
+    assert [cell.value for cell in sheet[1]] == FILTER_HEADERS
+    assert [cell.value for cell in sheet[2]] == ["用户可以用手机号登录", "连续输入错误密码", "密码错误没有锁定"]
+    assert [cell.value for cell in sheet[3]] == ["用户可以用手机号登录", "做该需求相关操作时", "密钥写在代码里"]
+    escaped = write_review_workbook(ReviewReport(
+        requirement="=导入公式",
+        findings=[Finding(
+            1, "=导入公式", "partial", "", "中", "a.py", "有入口",
+            omissions=[Omission("branch", "=缺口", "", "提交", "", "a.py")],
+        )],
+    ))
+    escaped_sheet = load_workbook(io.BytesIO(escaped))["测试过滤"]
+    assert escaped_sheet["A2"].value == "'=导入公式"
+    assert escaped_sheet["C2"].value == "'=缺口"
+    unseen = write_review_workbook(ReviewReport(
+        requirement="创建活动",
+        findings=[Finding(1, "活动创建后生成唯一活动ID", "missing", "", "中", "", "给定代码片段中未出现活动创建逻辑")],
+    ))
+    unseen_sheet = load_workbook(io.BytesIO(unseen))["测试过滤"]
+    assert unseen_sheet.max_row == 2
+    assert unseen_sheet["C2"].value == "没有看出明显遗漏"
 
 
 @pytest.mark.django_db
@@ -229,9 +294,9 @@ def test_requirement_scan_writes_tester_report(monkeypatch):
     assert not task.archive
     assert "super-secret-token" not in task.error_message
     workbook = load_workbook(io.BytesIO(task.result_file.read()))
-    assert workbook["补测用例"]["D2"].value == "密码错误没有锁定"
-    assert workbook["安全测试点"]["C2"].value == "硬编码密钥"
-    assert workbook["测试优先级"]["D2"].value == "围绕缺口加测，并补安全测试"
+    sheet = workbook["测试过滤"]
+    assert [cell.value for cell in sheet[2]] == ["用户可以用手机号登录", "连续输入错误密码", "密码错误没有锁定"]
+    assert sheet["C3"].value == "代码中存在硬编码密钥"
 
 
 @pytest.mark.django_db

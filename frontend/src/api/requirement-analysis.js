@@ -147,3 +147,87 @@ export function deletePromptConfig(id) {
     method: 'delete'
   })
 }
+
+// ==================== 需求质量审查 ====================
+
+export function listQualityReviews(params) {
+  return request({
+    url: '/requirement-analysis/quality-reviews/',
+    method: 'get',
+    params
+  })
+}
+
+export function createQualityReview(data) {
+  const isForm = typeof FormData !== 'undefined' && data instanceof FormData
+  return request({
+    url: '/requirement-analysis/quality-reviews/',
+    method: 'post',
+    data,
+    timeout: 150000,
+    headers: isForm ? { 'Content-Type': 'multipart/form-data' } : undefined
+  })
+}
+
+export function deleteQualityReview(id) {
+  return request({
+    url: `/requirement-analysis/quality-reviews/${id}/`,
+    method: 'delete'
+  })
+}
+
+// ==================== 需求文档撰写 ====================
+
+export function listRequirementDrafts(params) {
+  return request({
+    url: '/requirement-analysis/drafts/',
+    method: 'get',
+    params
+  })
+}
+
+export function getRequirementDraft(id) {
+  return request({
+    url: `/requirement-analysis/drafts/${id}/`,
+    method: 'get'
+  })
+}
+
+export function createRequirementDraft(data) {
+  return request({
+    url: '/requirement-analysis/drafts/',
+    method: 'post',
+    data,
+    timeout: 150000
+  })
+}
+
+export function updateRequirementDraft(id, data) {
+  return request({
+    url: `/requirement-analysis/drafts/${id}/`,
+    method: 'patch',
+    data
+  })
+}
+
+export function deleteRequirementDraft(id) {
+  return request({
+    url: `/requirement-analysis/drafts/${id}/`,
+    method: 'delete'
+  })
+}
+
+export function finalizeRequirementDraft(id) {
+  return request({
+    url: `/requirement-analysis/drafts/${id}/finalize/`,
+    method: 'post'
+  })
+}
+
+export function reviewRequirementDraft(id) {
+  return request({
+    url: `/requirement-analysis/drafts/${id}/review/`,
+    method: 'post',
+    timeout: 150000
+  })
+}

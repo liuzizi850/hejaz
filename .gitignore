@@ -94,3 +94,7 @@ build-multiplatform.sh
 # ?? git worktree
 .worktrees/
 
+
+# Local AI commit review key (never commit)
+.commit-review.env
+

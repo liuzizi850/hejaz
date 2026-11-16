@@ -43,6 +43,16 @@ export default defineConfig({
         secure: false,
         timeout: 600000,
         proxyTimeout: 600000,
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes, req) => {
+            const contentType = proxyRes.headers['content-type'] || ''
+            if (contentType.includes('text/event-stream') || (req.url || '').includes('stream_progress')) {
+              proxyRes.headers['cache-control'] = 'no-cache, no-transform'
+              proxyRes.headers['x-accel-buffering'] = 'no'
+              delete proxyRes.headers['content-length']
+            }
+          })
+        },
       },
       '^/media/': {
         target: 'http://127.0.0.1:8000',

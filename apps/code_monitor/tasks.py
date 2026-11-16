@@ -8,6 +8,15 @@ def token_cache_key(task_id: int) -> str:
     return f"code_monitor_git_token:{task_id}"
 
 
+API_QUEUE = "code_monitor_api"
+REVIEW_QUEUE = "code_monitor_review"
+
+
+def enqueue_scan(task_id: int, task_type: str):
+    queue = REVIEW_QUEUE if task_type == "requirement_review" else API_QUEUE
+    run_code_monitor_scan.apply_async(args=[task_id], queue=queue)
+
+
 @shared_task(bind=True, ignore_result=True)
 def run_code_monitor_scan(self, task_id: int):
     from apps.code_monitor.models import ScanTask

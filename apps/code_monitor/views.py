@@ -13,7 +13,7 @@ from apps.code_monitor.acquire import AcquireError, ensure_http_git_url
 from apps.code_monitor.models import CodeAddress, ScanTask
 from apps.code_monitor.requirement_file import RequirementFileError, requirement_text_from_upload
 from apps.code_monitor.serializers import CodeAddressSerializer, ScanTaskSerializer
-from apps.code_monitor.tasks import run_code_monitor_scan, token_cache_key
+from apps.code_monitor.tasks import enqueue_scan, token_cache_key
 from apps.requirement_analysis.models import AIModelConfig
 
 
@@ -101,7 +101,7 @@ class ScanTaskViewSet(
         try:
             if token:
                 token_cache.set(token_cache_key(task.id), token, timeout=700)
-            run_code_monitor_scan.delay(task.id)
+            enqueue_scan(task.id, task.task_type)
         except Exception:
             try:
                 token_cache.delete(token_cache_key(task.id))

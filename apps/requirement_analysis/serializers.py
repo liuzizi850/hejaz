@@ -2,8 +2,9 @@ from rest_framework import serializers
 from .models import (
     RequirementDocument, RequirementAnalysis, BusinessRequirement,
     GeneratedTestCase, AnalysisTask, AIModelConfig, PromptConfig, TestCaseGenerationTask,
-    GenerationConfig
+    GenerationConfig, RequirementQualityReview, RequirementDraft
 )
+from .requirement_writer import EMPTY_MARK, SECTION_ORDER
 
 
 class RequirementDocumentSerializer(serializers.ModelSerializer):
@@ -290,6 +291,107 @@ class TestCaseGenerationRequestSerializer(serializers.Serializer):
     requirement_text = serializers.CharField(help_text="需求描述")
     use_writer_model = serializers.BooleanField(default=True, help_text="是否使用编写模型")
     use_reviewer_model = serializers.BooleanField(default=True, help_text="是否使用评审模型")
+
+
+_QUALITY_REVIEW_FIELDS = [
+    'id', 'title', 'status', 'status_display', 'verdict', 'verdict_display',
+    'completeness_score', 'consistency_score', 'testability_score', 'overall_score',
+    'summary', 'findings', 'findings_count', 'input_truncated', 'model_name',
+    'error_message', 'project', 'project_name', 'document', 'created_at',
+]
+
+
+class RequirementQualityReviewSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    verdict_display = serializers.CharField(source='get_verdict_display', read_only=True)
+    project_name = serializers.SerializerMethodField()
+    findings_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RequirementQualityReview
+        fields = _QUALITY_REVIEW_FIELDS + ['source_text']
+
+    def get_project_name(self, obj):
+        if obj.project_id:
+            return obj.project.name
+        return ''
+
+    def get_findings_count(self, obj):
+        return len(obj.findings or [])
+
+
+class RequirementQualityReviewListSerializer(RequirementQualityReviewSerializer):
+    class Meta(RequirementQualityReviewSerializer.Meta):
+        fields = _QUALITY_REVIEW_FIELDS
+
+
+_DRAFT_FIELDS = [
+    'id', 'title', 'status', 'status_display', 'project', 'project_name',
+    'document', 'acceptance_count', 'open_questions_count', 'gaps_unlisted',
+    'latest_review', 'latest_review_verdict', 'latest_review_status',
+    'input_truncated', 'model_name', 'error_message', 'created_at', 'updated_at',
+]
+
+
+class RequirementDraftSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    project_name = serializers.SerializerMethodField()
+    acceptance_count = serializers.SerializerMethodField()
+    open_questions_count = serializers.SerializerMethodField()
+    gaps_unlisted = serializers.SerializerMethodField()
+    latest_review_verdict = serializers.SerializerMethodField()
+    latest_review_status = serializers.SerializerMethodField()
+    latest_review_summary = serializers.SerializerMethodField()
+    latest_review_overall_score = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RequirementDraft
+        fields = _DRAFT_FIELDS + [
+            'source_text', 'document_markdown', 'sections',
+            'acceptance_criteria', 'open_questions',
+            'latest_review_summary', 'latest_review_overall_score',
+        ]
+
+    def get_project_name(self, obj):
+        if obj.project_id:
+            return obj.project.name
+        return ''
+
+    def get_acceptance_count(self, obj):
+        return len(obj.acceptance_criteria or [])
+
+    def get_open_questions_count(self, obj):
+        return len(obj.open_questions or [])
+
+    def get_gaps_unlisted(self, obj):
+        sections = obj.sections or {}
+        unspecified = any(sections.get(key) == EMPTY_MARK for key, _label in SECTION_ORDER)
+        return unspecified and not (obj.open_questions or [])
+
+    def get_latest_review_verdict(self, obj):
+        if obj.latest_review_id:
+            return obj.latest_review.verdict
+        return ''
+
+    def get_latest_review_status(self, obj):
+        if obj.latest_review_id:
+            return obj.latest_review.status
+        return ''
+
+    def get_latest_review_summary(self, obj):
+        if obj.latest_review_id:
+            return obj.latest_review.summary
+        return ''
+
+    def get_latest_review_overall_score(self, obj):
+        if obj.latest_review_id:
+            return obj.latest_review.overall_score
+        return None
+
+
+class RequirementDraftListSerializer(RequirementDraftSerializer):
+    class Meta(RequirementDraftSerializer.Meta):
+        fields = _DRAFT_FIELDS
 
 
 class GenerationConfigSerializer(serializers.ModelSerializer):

@@ -92,12 +92,16 @@ def _parse_hint(text: str):
     cleaned = re.sub(r"^(optional|required)\s+", "", cleaned, flags=re.I).strip()
     if not cleaned:
         return ("string", "", "")
-    array_match = re.fullmatch(r"(?:array|list)\s*[<(]\s*([A-Za-z]+)\s*[>)]", cleaned, flags=re.I)
+    array_match = re.match(
+        r"^(?:array|list)\s*[<(]\s*([A-Za-z]+)\s*[>)]\s*(?:[,，:：]\s*(.*))?$",
+        cleaned,
+        flags=re.I,
+    )
     if array_match:
-        return ("array", array_match.group(1).lower(), "")
-    bracket_match = re.fullmatch(r"([A-Za-z]+)\s*\[\s*\]", cleaned)
+        return ("array", array_match.group(1).lower(), (array_match.group(2) or "").strip())
+    bracket_match = re.match(r"^([A-Za-z]+)\s*\[\s*\]\s*(?:[,，:：]\s*(.*))?$", cleaned)
     if bracket_match:
-        return ("array", bracket_match.group(1).lower(), "")
+        return ("array", bracket_match.group(1).lower(), (bracket_match.group(2) or "").strip())
     typed = re.match(r"^([A-Za-z]+)\b\s*(?:[,，:：|\-—]\s*(.*))?$", cleaned)
     if typed and typed.group(1).lower() in _ALL_KINDS:
         return (typed.group(1).lower(), "", (typed.group(2) or "").strip())

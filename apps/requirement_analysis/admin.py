@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     RequirementDocument, RequirementAnalysis, BusinessRequirement,
     GeneratedTestCase, AnalysisTask, AIModelConfig, PromptConfig,
-    GenerationConfig, TestCaseGenerationTask
+    GenerationConfig, TestCaseGenerationTask, RequirementQualityReview, RequirementDraft
 )
 
 
@@ -44,6 +44,22 @@ class AnalysisTaskAdmin(admin.ModelAdmin):
     list_filter = ['task_type', 'status', 'created_at']
     search_fields = ['task_id', 'document__title']
     readonly_fields = ['task_id', 'started_at', 'completed_at', 'created_at']
+
+
+@admin.register(RequirementDraft)
+class RequirementDraftAdmin(admin.ModelAdmin):
+    list_display = ['title', 'status', 'created_by', 'created_at']
+    list_filter = ['status', 'created_at']
+    search_fields = ['title', 'source_text']
+    readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(RequirementQualityReview)
+class RequirementQualityReviewAdmin(admin.ModelAdmin):
+    list_display = ['title', 'verdict', 'overall_score', 'status', 'created_by', 'created_at']
+    list_filter = ['verdict', 'status', 'created_at']
+    search_fields = ['title', 'summary']
+    readonly_fields = ['created_at']
 
 
 @admin.register(AIModelConfig)

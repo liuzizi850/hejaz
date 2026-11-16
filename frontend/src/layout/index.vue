@@ -24,6 +24,14 @@
               <el-menu-item index="/ai-generation/requirement-analysis">{{ $t('menu.aiCaseGeneration') }}</el-menu-item>
               <el-menu-item index="/ai-generation/generated-testcases">{{ $t('menu.aiGeneratedTestcases') }}</el-menu-item>
             </el-sub-menu>
+            <el-menu-item index="/ai-generation/requirement-writing">
+              <el-icon><Edit /></el-icon>
+              <span>{{ $t('menu.requirementWriting') }}</span>
+            </el-menu-item>
+            <el-menu-item index="/ai-generation/requirement-quality">
+              <el-icon><Finished /></el-icon>
+              <span>{{ $t('menu.requirementQualityReview') }}</span>
+            </el-menu-item>
             <el-menu-item index="/ai-generation/projects">
               <el-icon><Folder /></el-icon>
               <span>{{ $t('menu.projectManagement') }}</span>
@@ -469,7 +477,7 @@ import { useI18n } from 'vue-i18n'
 import {
   Monitor, Folder, Document, Flag, Check, Collection, VideoPlay,
   DataAnalysis, ChatDotRound, DocumentCopy, Link, MagicStick,
-  Odometer, Timer, Setting, AlarmClock, Bell, Aim, Edit, Cpu, ArrowDown, Cellphone, Connection, FolderOpened, Tickets, Plus,
+  Odometer, Timer, Setting, AlarmClock, Bell, Aim, Edit, Cpu, ArrowDown, Cellphone, Connection, FolderOpened, Tickets, Plus, Finished,
   SetUp, TrendCharts, VideoCamera
 } from '@element-plus/icons-vue'
 import logoSvg from '@/assets/images/logo.svg'
@@ -537,6 +545,8 @@ const breadcrumbTitle = computed(() => {
   const routeMap = {
     // AI用例生成
     '/ai-generation/requirement-analysis': t('menu.aiCaseGeneration'),
+    '/ai-generation/requirement-writing': t('menu.requirementWriting'),
+    '/ai-generation/requirement-quality': t('menu.requirementQualityReview'),
     '/ai-generation/generated-testcases': t('menu.aiGeneratedTestcases'),
     '/ai-generation/projects': t('menu.projectManagement'),
     '/ai-generation/testcases': t('menu.testCases'),

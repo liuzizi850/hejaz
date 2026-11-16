@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from apps.code_monitor.models import CodeAddress, ScanTask
-from apps.code_monitor.tasks import token_cache_key
+from apps.code_monitor.tasks import API_QUEUE, REVIEW_QUEUE, enqueue_scan, token_cache_key
 from apps.requirement_analysis.models import AIModelConfig
 from apps.users.models import User
 
@@ -95,6 +95,18 @@ def test_address_is_private():
     assert CodeAddress.objects.filter(created_by=owner_user).count() == 1
 
 
+def test_api_and_review_use_separate_queues(monkeypatch):
+    queued = []
+
+    def apply_async(*args, **kwargs):
+        queued.append(kwargs["queue"])
+
+    monkeypatch.setattr("apps.code_monitor.tasks.run_code_monitor_scan.apply_async", apply_async)
+    enqueue_scan(1, ScanTask.TASK_API_EXTRACT)
+    enqueue_scan(2, ScanTask.TASK_REQUIREMENT_REVIEW)
+    assert queued == [API_QUEUE, REVIEW_QUEUE]
+
+
 def test_scan_requires_active_model(monkeypatch):
     client, user = _client("need-model")
     inactive = _config(user, active=False)
@@ -110,7 +122,7 @@ def test_token_is_cached_not_stored(monkeypatch):
     client, user = _client("token-user")
     config = _config(user)
     address = CodeAddress.objects.create(name="仓库", git_url="https://example.com/private.git", created_by=user)
-    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", lambda task_id: None)
+    monkeypatch.setattr("apps.code_monitor.views.enqueue_scan", lambda *args, **kwargs: None)
     response = client.post("/api/code-monitor/tasks/", {
         "address_id": address.id,
         "model_config_id": config.id,
@@ -220,10 +232,10 @@ def test_git_task_rejects_unsafe_address_url(monkeypatch):
     address = CodeAddress.objects.create(name="bad", git_url="file:///tmp/repo.git", created_by=user)
     called = {"n": 0}
 
-    def delay(task_id):
+    def delay(*args, **kwargs):
         called["n"] += 1
 
-    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", delay)
+    monkeypatch.setattr("apps.code_monitor.views.enqueue_scan", delay)
     response = client.post("/api/code-monitor/tasks/", {
         "address_id": address.id,
         "model_config_id": config.id,
@@ -239,10 +251,10 @@ def test_enqueue_failure_marks_task_failed_and_drops_token_and_zip(monkeypatch):
     client, user = _client("enqueue-fail")
     config = _config(user)
 
-    def explode(task_id):
+    def explode(*args, **kwargs):
         raise RuntimeError("broker down")
 
-    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", explode)
+    monkeypatch.setattr("apps.code_monitor.views.enqueue_scan", explode)
     archive = SimpleUploadedFile("repo.zip", b"not-a-real-zip", content_type="application/zip")
     response = client.post("/api/code-monitor/tasks/", {
         "archive": archive,
@@ -266,13 +278,13 @@ def test_enqueue_failure_returns_when_token_cache_is_down(monkeypatch):
     config = _config(user)
     cache = caches["code_monitor"]
 
-    def explode(task_id):
+    def explode(*args, **kwargs):
         raise RuntimeError("broker down")
 
     def delete_boom(key):
         raise ConnectionError("Connection closed by server")
 
-    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", explode)
+    monkeypatch.setattr("apps.code_monitor.views.enqueue_scan", explode)
     monkeypatch.setattr(cache, "delete", delete_boom)
     archive = SimpleUploadedFile("repo.zip", b"not-a-real-zip", content_type="application/zip")
     response = client.post("/api/code-monitor/tasks/", {
@@ -293,7 +305,7 @@ def test_requirement_review_requires_text(monkeypatch):
     client, user = _client("review-api")
     config = _config(user)
     address = CodeAddress.objects.create(name="仓库", git_url="https://example.com/a.git", created_by=user)
-    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", lambda task_id: None)
+    monkeypatch.setattr("apps.code_monitor.views.enqueue_scan", lambda *args, **kwargs: None)
     missing = client.post("/api/code-monitor/tasks/", {
         "address_id": address.id,
         "model_config_id": config.id,
@@ -331,7 +343,7 @@ def test_requirement_review_accepts_uploaded_requirement_file(monkeypatch):
     client, user = _client("review-file")
     config = _config(user)
     address = CodeAddress.objects.create(name="仓库", git_url="https://example.com/a.git", created_by=user)
-    monkeypatch.setattr("apps.code_monitor.views.run_code_monitor_scan.delay", lambda task_id: None)
+    monkeypatch.setattr("apps.code_monitor.views.enqueue_scan", lambda *args, **kwargs: None)
     rejected = client.post("/api/code-monitor/tasks/", {
         "address_id": address.id,
         "model_config_id": config.id,

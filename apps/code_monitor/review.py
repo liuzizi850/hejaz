@@ -62,6 +62,14 @@ _SYNONYMS = {
     "密码": ["password", "passwd"],
     "手机": ["phone", "mobile"],
     "订单": ["order"],
+    "活动": ["activity", "event"],
+    "购票": ["ticket", "purchase"],
+    "票券": ["ticket", "voucher"],
+    "余额": ["balance"],
+    "流水": ["flow", "ledger"],
+    "冻结": ["freeze", "frozen"],
+    "扣款": ["deduct", "purchase"],
+    "扣减": ["deduct"],
     "用户": ["user"],
     "支付": ["pay", "payment"],
     "权限": ["auth", "permission"],
@@ -92,6 +100,13 @@ _VULN_RULES = [
     ("debug", re.compile(r"(?i)\bDEBUG\s*=\s*True\b")),
 ]
 _DEFECT_QUESTION = re.compile(r"漏洞|缺陷|\bbugs?\b|安全问题|代码质量", re.IGNORECASE)
+_FRONTEND_SUFFIXES = {".vue", ".jsx", ".tsx", ".swift", ".dart", ".m", ".mm"}
+_BACKEND_SUFFIXES = {".java", ".py", ".go", ".php", ".cs", ".rb"}
+_UI_MARK = re.compile(
+    r"颜色|红字|红色|灰色|绿色|高亮|样式|字体|图标|跳转|文案|按钮名称|控件名称|"
+    r"字段展示|展示字段|显示字段|不可见|隐藏该入口"
+)
+_DATA_MARK = re.compile(r"校验|扣减|扣款|落库|入库|写入数据库|审批|退款|生成.+流水")
 _MAX_CODE_VULNS = 30
 _MAX_CODE_DEFECTS = 20
 _VULN_TEXT = {
@@ -152,7 +167,8 @@ SPLIT_SYSTEM = """你是测试分析员。把用户需求拆成检查点，供�
 3. 「是否做了某项能力」「有没有实现某项能力」只要这项能力能在代码里看出，就是可检查需求。例如：是否做了国际化、是否做了权限校验、是否记录操作日志。
 4. 只有纯感受才标 false，例如「体验要好」「界面好看」。
 5. 「代码有没有漏洞」「有没有 bug」「有没有明显缺陷」是可检查需求，text 写「检查整个代码是否存在明显漏洞和缺陷」。
-6. 没有可拆内容时输出 []。"""
+6. 没有可拆内容时输出 []。
+7. 当前只有后端代码：页面展示哪些字段、颜色、文案、按钮样式、点击跳转标 false，reason 写「这是前端表现，后端代码对不上」。校验、金额、状态、落库、余额、审批、流水仍标 true。"""
 
 JUDGE_SYSTEM = """你是测试分析员。根据给定代码片段，判断一条需求点的实现、遗漏和明显漏洞。片段以「文件: <路径>」开头。
 
@@ -183,7 +199,8 @@ JUDGE_SYSTEM = """你是测试分析员。根据给定代码片段，判断一�
 规则：
 1. 只根据给定片段，不要用常识补功能。
 2. 遗漏必须能指出旁边已经存在的代码。需求没写、片段里也没有相邻实现的功能，不要报遗漏。
-3. 没有把握时 verdict 用 missing，omissions 和 vulnerabilities 用空数组。"""
+3. 片段主题对不上这条需求时，不要写成功能没做。verdict 用 missing，evidence_note 写「无法从给定片段判断」。只有片段明确就是这条功能、并且看不到该行为时，才说明缺了什么。没有把握时 omissions 和 vulnerabilities 用空数组。
+4. 当前是后端代码：不要把页面展示、颜色、文案、跳转写成遗漏。只写数据、校验、状态和存储上的缺口。"""
 
 
 @dataclass
@@ -322,6 +339,27 @@ def retrieve_snippets(files: list[IndexedFile], requirement_point: str) -> list[
     return chosen
 
 
+def code_surface(files: list[IndexedFile]) -> str:
+    front = back = 0
+    for item in files:
+        suffix = Path(item.source_file).suffix.lower()
+        if suffix in _FRONTEND_SUFFIXES:
+            front += 1
+        elif suffix in _BACKEND_SUFFIXES:
+            back += 1
+    if back and not front:
+        return "backend"
+    if front and not back:
+        return "frontend"
+    return "mixed"
+
+
+def is_frontend_only(text: str) -> bool:
+    if not _UI_MARK.search(text or ""):
+        return False
+    return _DATA_MARK.search(text or "") is None
+
+
 def review_repository(config, root: Path, requirement: str, on_progress=None) -> ReviewReport:
     from apps.code_monitor.acquire import AcquireError
 
@@ -332,7 +370,13 @@ def review_repository(config, root: Path, requirement: str, on_progress=None) ->
     if not files:
         raise AcquireError("没有找到可检查的源代码")
     _progress(on_progress, 10)
-    checkpoints, truncated = split_checkpoints(config, text)
+    surface = code_surface(files)
+    checkpoints, truncated = split_checkpoints(config, text, surface)
+    if surface == "backend":
+        for item in checkpoints:
+            if is_frontend_only(item["text"]):
+                item["checkable"] = False
+                item["reason"] = "这是页面展示、颜色或跳转，当前代码是后端"
     if not checkpoints:
         _progress(on_progress, 100)
         return ReviewReport(
@@ -344,13 +388,16 @@ def review_repository(config, root: Path, requirement: str, on_progress=None) ->
     findings = []
     total = len(checkpoints)
     for index, checkpoint in enumerate(checkpoints, start=1):
-        findings.append(_review_one(config, files, index, checkpoint))
+        findings.append(_review_one(config, files, index, checkpoint, surface))
         _progress(on_progress, 20 + int(index * 80 / total))
     return ReviewReport(requirement=text, findings=findings, truncated=truncated)
 
 
-def split_checkpoints(config, requirement: str) -> tuple[list[dict], bool]:
-    payload = _call_json(config, SPLIT_SYSTEM, requirement, "list")
+def split_checkpoints(config, requirement: str, surface: str = "mixed") -> tuple[list[dict], bool]:
+    user = requirement
+    if surface == "backend":
+        user += "\n\n当前只有后端代码。页面展示、颜色、文案和跳转不要标成可检查。"
+    payload = _call_json(config, SPLIT_SYSTEM, user, "list")
     kept = []
     for item in payload:
         if not isinstance(item, dict):
@@ -455,7 +502,7 @@ def call_model(config, system: str, user: str) -> str:
     return str(content)
 
 
-def _review_one(config, files: list[IndexedFile], number: int, checkpoint: dict) -> Finding:
+def _review_one(config, files: list[IndexedFile], number: int, checkpoint: dict, surface: str = "mixed") -> Finding:
     text = checkpoint["text"]
     if _is_defect_scan(text):
         return review_code_issues(files, number, text)
@@ -469,8 +516,23 @@ def _review_one(config, files: list[IndexedFile], number: int, checkpoint: dict)
     known = [item.source_file for item in snippets]
     if not snippets:
         return _finish(number, text, "missing", "", "未检索到相关代码", [], [])
-    payload = _call_json(config, JUDGE_SYSTEM, _judge_user(text, snippets), "dict")
-    return normalize_finding(number, text, payload, known, snippets)
+    payload = _call_json(config, JUDGE_SYSTEM, _judge_user(text, snippets, surface), "dict")
+    if surface == "backend" and isinstance(payload.get("omissions"), list):
+        payload["omissions"] = [
+            item for item in payload["omissions"]
+            if not (isinstance(item, dict) and _UI_MARK.search(str(item.get("gap") or "")))
+        ]
+    finding = normalize_finding(number, text, payload, known, snippets)
+    if (
+        surface == "backend"
+        and finding.verdict == "partial"
+        and not finding.omissions
+        and not finding.vulnerabilities
+    ):
+        finding.verdict = "implemented"
+        finding.advice = _advice("implemented", [], [])
+        finding.priority = _priority("implemented", [], [])
+    return finding
 
 
 def _finish(number, text, verdict, evidence, note, omissions, vulnerabilities) -> Finding:
@@ -831,8 +893,11 @@ def _flatten_keys(value, prefix: str = "") -> list[str]:
     return keys
 
 
-def _judge_user(text: str, snippets: list[FileChunk]) -> str:
-    return f"需求点：{text}\n\n代码片段：\n{render_batch(snippets)}"
+def _judge_user(text: str, snippets: list[FileChunk], surface: str = "mixed") -> str:
+    note = ""
+    if surface == "backend":
+        note = "\n\n当前是后端代码。不要把页面展示、颜色、文案、跳转写成遗漏。"
+    return f"需求点：{text}\n\n代码片段：\n{render_batch(snippets)}{note}"
 
 
 def _score(item: IndexedFile, tokens: list[str]) -> int:
