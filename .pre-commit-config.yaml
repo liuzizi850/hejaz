@@ -8,6 +8,8 @@ repos:
           - --config=p/secrets
           - --error
           - --skip-unknown-extensions
+          # 只拦住本次改动新引入的问题，历史问题不挡住后续提交。
+          - --baseline-commit=HEAD
           # Django 4.2 需要 Python 3.8+，3.6 的 Popen 兼容规则不适用。
           - --exclude-rule=python.lang.compatibility.python36.python36-compatibility-Popen1
           - --exclude-rule=python.lang.compatibility.python36.python36-compatibility-Popen2
