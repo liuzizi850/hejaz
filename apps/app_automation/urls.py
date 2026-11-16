@@ -42,6 +42,8 @@ router.register(r'recording-sessions', AppRecordingSessionViewSet, basename='app
 
 from .ai_run.urls import urlpatterns as ai_run_urlpatterns
 
+from .ai_run.urls import urlpatterns as ai_run_urlpatterns
+
 urlpatterns = [
     path('', include(router.urls)),
     path('ai-runs/', include(ai_run_urlpatterns)),
