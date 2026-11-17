@@ -3049,9 +3049,12 @@ class AICaseViewSet(viewsets.ModelViewSet):
                                 status
                             )
                             if updated:
+                                settled = settle_execution_record(execution_record)
                                 update_fields = ['planned_tasks']
-                                if str(status).strip().lower() == 'completed' and 'backfilled_ids' in locals() and backfilled_ids:
+                                if settled or ('backfilled_ids' in locals() and backfilled_ids):
                                     update_fields.append('logs')
+                                if settled:
+                                    update_fields.extend(['status', 'end_time', 'duration'])
                                 await sync_to_async(safe_save)(execution_record, update_fields=update_fields)
                     except Exception as e:
                         logger.error(f"更新步骤状态失败: {e}")
@@ -3063,11 +3066,12 @@ class AICaseViewSet(viewsets.ModelViewSet):
                     should_stop=should_stop
                 )
 
-                # 检查是否是手动停止
-                if should_stop():
+                # 检查是否是手动停止。子任务已经收口时保留当时的结果。
+                already_settled = execution_record.status in ('passed', 'failed', 'stopped')
+                if not already_settled and should_stop():
                     execution_record.status = 'stopped'
                     execution_record.logs += "\n[System] 任务已由用户停止。"
-                else:
+                elif not already_settled:
                     # 根据执行过程判断最终状态（任务或步骤出现失败则标记失败）
                     failed = False
                     if execution_record.planned_tasks:
@@ -3110,8 +3114,8 @@ class AICaseViewSet(viewsets.ModelViewSet):
 
                 execution_record.steps_completed = steps
 
-                # 自动标记已完成的任务
-                if execution_record.planned_tasks:
+                # 自动标记已完成的任务。提前收口过的记录不再重复写统计。
+                if execution_record.planned_tasks and not already_settled:
                     self._auto_mark_completed_tasks(execution_record)
                     execution_record.logs = append_execution_summary(
                         execution_record.logs,
@@ -3124,27 +3128,32 @@ class AICaseViewSet(viewsets.ModelViewSet):
                 safe_save(execution_record)
 
             except Exception as e:
-                error_message = str(e)
-                failed_task_id = None if is_infrastructure_failure(error_message) else mark_first_active_task(execution_record.planned_tasks, 'failed')
-                execution_record.status = 'failed'
-                execution_record.end_time = timezone.now()
-                execution_record.duration = (execution_record.end_time - execution_record.start_time).total_seconds()
-                if 'Execution LLM unavailable' in error_message:
-                    execution_record.logs += f"\n执行出错: AI 执行模型连接失败。{error_message}"
+                if execution_record.status in ('passed', 'failed') or settle_execution_record(execution_record):
+                    logger.warning(f"子任务已结束，忽略收尾异常: {e}")
+                    try:
+                        safe_save(execution_record)
+                    except Exception:
+                        logger.error(f"保存收口状态时出错: {e}")
                 else:
-                    execution_record.logs += f"\n执行出错: {error_message}"
-                if failed_task_id is not None:
-                    execution_record.logs += f"\n[System] 子任务 {failed_task_id} 已自动标记为失败。"
-                execution_record.logs = append_execution_summary(
-                    execution_record.logs,
-                    summarize_planned_tasks(execution_record.planned_tasks)
-                )
-                try:
-                    safe_save(execution_record)
-                except:
-                    # 如果保存失败，至少尝试保存基本信息
-                    logger.error(f"保存失败状态时出错: {e}")
-                    pass
+                    error_message = str(e)
+                    failed_task_id = None if is_infrastructure_failure(error_message) else mark_first_active_task(execution_record.planned_tasks, 'failed')
+                    execution_record.status = 'failed'
+                    execution_record.end_time = timezone.now()
+                    execution_record.duration = (execution_record.end_time - execution_record.start_time).total_seconds()
+                    if 'Execution LLM unavailable' in error_message:
+                        execution_record.logs += f"\n执行出错: AI 执行模型连接失败。{error_message}"
+                    else:
+                        execution_record.logs += f"\n执行出错: {error_message}"
+                    if failed_task_id is not None:
+                        execution_record.logs += f"\n[System] 子任务 {failed_task_id} 已自动标记为失败。"
+                    execution_record.logs = append_execution_summary(
+                        execution_record.logs,
+                        summarize_planned_tasks(execution_record.planned_tasks)
+                    )
+                    try:
+                        safe_save(execution_record)
+                    except Exception:
+                        logger.error(f"保存失败状态时出错: {e}")
             finally:
                 # 清理停止信号
                 if execution_record.id in STOP_SIGNALS:
@@ -3357,6 +3366,32 @@ def resolve_execution_status(planned_tasks):
     if summary['pending'] > 0 or summary['in_progress'] > 0:
         return 'failed', summary
     return 'passed', summary
+
+
+def planned_tasks_are_settled(planned_tasks):
+    """全部子任务都进入终态后，整单就可以出结果。"""
+    summary = summarize_planned_tasks(planned_tasks)
+    return summary['total'] > 0 and summary['pending'] == 0 and summary['in_progress'] == 0
+
+
+def settle_execution_record(execution_record):
+    """子任务全部终态时立刻写入整单状态。已经写过则不再改日志。"""
+    if execution_record.status in ('passed', 'failed', 'stopped'):
+        return execution_record.status in ('passed', 'failed')
+    if not planned_tasks_are_settled(execution_record.planned_tasks):
+        return False
+
+    final_status, summary = resolve_execution_status(execution_record.planned_tasks)
+    execution_record.status = final_status
+    execution_record.end_time = timezone.now()
+    if execution_record.start_time and execution_record.end_time:
+        execution_record.duration = (execution_record.end_time - execution_record.start_time).total_seconds()
+    if final_status == 'passed':
+        execution_record.logs += "\n执行完成。"
+    else:
+        execution_record.logs += "\n执行完成，但检测到失败步骤或任务。"
+    execution_record.logs = append_execution_summary(execution_record.logs, summary)
+    return True
 
 
 def append_execution_summary(logs, summary):
@@ -3587,10 +3622,13 @@ class AIExecutionRecordViewSet(viewsets.ModelViewSet):
                                 if updated:
                                     logger.info(f"DEBUG: Updated task {task_id} from {old_status} to {status}")
                             if updated:
+                                settled = settle_execution_record(execution_record)
                                 # 立即保存到数据库，确保前端轮询能看到最新状态
                                 update_fields = ['planned_tasks']
-                                if 'backfilled_ids' in locals() and backfilled_ids:
+                                if settled or ('backfilled_ids' in locals() and backfilled_ids):
                                     update_fields.append('logs')
+                                if settled:
+                                    update_fields.extend(['status', 'end_time', 'duration'])
                                 await sync_to_async(safe_save)(execution_record, update_fields=update_fields)
                             else:
                                 logger.warning(
@@ -3608,11 +3646,12 @@ class AIExecutionRecordViewSet(viewsets.ModelViewSet):
                     case_name=task_description[:50] if task_description else "Adhoc Task"  # 传递用例名称用于GIF文件命名
                 )
 
-                # 检查是否是手动停止 (使用同步版本)
-                if should_stop_sync():
+                # 检查是否是手动停止 (使用同步版本)。子任务已经收口时保留当时的结果。
+                already_settled = execution_record.status in ('passed', 'failed', 'stopped')
+                if not already_settled and should_stop_sync():
                     execution_record.status = 'stopped'
                     execution_record.logs += "\n[System] 任务已由用户停止。"
-                else:
+                elif not already_settled:
                     # 根据执行结果判定失败
                     failed = False
                     if execution_record.planned_tasks:
@@ -3654,8 +3693,8 @@ class AIExecutionRecordViewSet(viewsets.ModelViewSet):
 
                 execution_record.steps_completed = steps
 
-                # 自动标记已完成的任务
-                if execution_record.planned_tasks:
+                # 自动标记已完成的任务。提前收口过的记录不再重复写统计。
+                if execution_record.planned_tasks and not already_settled:
                     self._auto_mark_completed_tasks(execution_record)
                     execution_record.logs = append_execution_summary(
                         execution_record.logs,
@@ -3668,27 +3707,32 @@ class AIExecutionRecordViewSet(viewsets.ModelViewSet):
                 safe_save(execution_record)
 
             except Exception as e:
-                error_message = str(e)
-                failed_task_id = None if is_infrastructure_failure(error_message) else mark_first_active_task(execution_record.planned_tasks, 'failed')
-                execution_record.status = 'failed'
-                execution_record.end_time = timezone.now()
-                execution_record.duration = (execution_record.end_time - execution_record.start_time).total_seconds()
-                if 'Execution LLM unavailable' in error_message:
-                    execution_record.logs += f"\n执行出错: AI 执行模型连接失败。{error_message}"
+                if execution_record.status in ('passed', 'failed') or settle_execution_record(execution_record):
+                    logger.warning(f"子任务已结束，忽略收尾异常: {e}")
+                    try:
+                        safe_save(execution_record)
+                    except Exception:
+                        logger.error(f"保存收口状态时出错: {e}")
                 else:
-                    execution_record.logs += f"\n执行出错: {error_message}"
-                if failed_task_id is not None:
-                    execution_record.logs += f"\n[System] 子任务 {failed_task_id} 已自动标记为失败。"
-                execution_record.logs = append_execution_summary(
-                    execution_record.logs,
-                    summarize_planned_tasks(execution_record.planned_tasks)
-                )
-                try:
-                    safe_save(execution_record)
-                except:
-                    # 如果保存失败，至少尝试保存基本信息
-                    logger.error(f"保存失败状态时出错: {e}")
-                    pass
+                    error_message = str(e)
+                    failed_task_id = None if is_infrastructure_failure(error_message) else mark_first_active_task(execution_record.planned_tasks, 'failed')
+                    execution_record.status = 'failed'
+                    execution_record.end_time = timezone.now()
+                    execution_record.duration = (execution_record.end_time - execution_record.start_time).total_seconds()
+                    if 'Execution LLM unavailable' in error_message:
+                        execution_record.logs += f"\n执行出错: AI 执行模型连接失败。{error_message}"
+                    else:
+                        execution_record.logs += f"\n执行出错: {error_message}"
+                    if failed_task_id is not None:
+                        execution_record.logs += f"\n[System] 子任务 {failed_task_id} 已自动标记为失败。"
+                    execution_record.logs = append_execution_summary(
+                        execution_record.logs,
+                        summarize_planned_tasks(execution_record.planned_tasks)
+                    )
+                    try:
+                        safe_save(execution_record)
+                    except Exception:
+                        logger.error(f"保存失败状态时出错: {e}")
             finally:
                 # 清理停止信号
                 if execution_record.id in STOP_SIGNALS:

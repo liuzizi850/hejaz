@@ -45,7 +45,24 @@ if settings.ANALYTICS_ENABLED:
     urlpatterns.append(path('api/analytics/', include('apps.analytics.urls')))
 
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    import os
+    from django.http import Http404
+    from apps.app_automation.recording.adb_gateway import media_search_roots, resolve_media_file
+
+    def serve_project_media(request, path):
+        full = resolve_media_file(path)
+        if not full:
+            raise Http404("媒体文件不存在")
+        full_abs = os.path.abspath(full)
+        for root in media_search_roots():
+            root_abs = os.path.abspath(root)
+            if full_abs.startswith(root_abs + os.sep):
+                return serve(request, path, document_root=root)
+        raise Http404("媒体文件不存在")
+
+    urlpatterns += [
+        path('media/<path:path>', serve_project_media),
+    ]
     urlpatterns += static(settings.STATIC_FILES_URL, document_root=settings.STATIC_FILES_ROOT)
 
 # APP自动化 Template 目录静态访问

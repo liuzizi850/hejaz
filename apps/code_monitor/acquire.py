@@ -102,6 +102,21 @@ def _extended_path(path: Path) -> str:
     return "\\\\?\\" + text
 
 
+_WINDOWS_INVALID = '<>:"|?*'
+_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+
+
+def _safe_part(part: str) -> str:
+    """Windows 不允许的字符和保留名改成可写的文件名，避免整个压缩包解压失败。"""
+    cleaned = "".join("_" if ch in _WINDOWS_INVALID or ord(ch) < 32 else ch for ch in part)
+    cleaned = cleaned.rstrip(" .")
+    if not cleaned:
+        cleaned = "_"
+    if cleaned.split(".", 1)[0].upper() in _RESERVED_NAMES:
+        cleaned = f"_{cleaned}"
+    return cleaned
+
+
 def _member_target(dest: Path, name: str) -> Path:
     normalized = name.replace("\\", "/")
     if normalized.startswith("/") or (len(normalized) >= 2 and normalized[1] == ":"):
@@ -112,7 +127,7 @@ def _member_target(dest: Path, name: str) -> Path:
             continue
         if part == "..":
             raise AcquireError("压缩包路径不安全")
-        parts.append(part)
+        parts.append(_safe_part(part))
     target = dest
     for part in parts:
         target = target / part
@@ -121,6 +136,12 @@ def _member_target(dest: Path, name: str) -> Path:
 
 def unzip_archive(archive_path: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
+    try:
+        size = archive_path.stat().st_size
+    except OSError as exc:
+        raise AcquireError(f"取代码失败: zip 打不开: {exc}") from exc
+    if size == 0:
+        raise AcquireError("取代码失败: zip 是空文件")
     try:
         with zipfile.ZipFile(archive_path) as zf:
             for info in zf.infolist():
@@ -137,4 +158,5 @@ def unzip_archive(archive_path: Path, dest: Path) -> None:
     except AcquireError:
         raise
     except (zipfile.BadZipFile, OSError) as exc:
-        raise AcquireError("取代码失败: zip 打不开") from exc
+        detail = str(exc).strip() or type(exc).__name__
+        raise AcquireError(f"取代码失败: zip 打不开: {detail}") from exc

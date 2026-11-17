@@ -503,6 +503,7 @@ export default {
         console.error(this.$t('generatedTestCases.loadTasksFailed'), error)
         this.tasks = []
         this.pagination.total = 0
+        ElMessage.error(this.$t('generatedTestCases.loadTasksFailed'))
       } finally {
         this.isLoading = false
         // 清空选择（因为任务列表已更新）

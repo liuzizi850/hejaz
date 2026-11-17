@@ -170,6 +170,17 @@ def test_unzip_extracts_long_paths(tmp_path: Path):
     assert Path(_extended_path(target)).read_text(encoding="utf-8") == "console.log(1)"
 
 
+def test_unzip_rewrites_windows_illegal_names(tmp_path: Path):
+    archive = tmp_path / "names.zip"
+    dest = tmp_path / "out"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("src/a:b.js", "axios.get('/api/a')")
+        zf.writestr("src/AUX.txt", "reserved")
+    unzip_archive(archive, dest)
+    assert (dest / "src" / "a_b.js").read_text(encoding="utf-8") == "axios.get('/api/a')"
+    assert (dest / "src" / "_AUX.txt").read_text(encoding="utf-8") == "reserved"
+
+
 def test_unzip_extracts_safe_files(tmp_path: Path):
     archive = tmp_path / "ok.zip"
     dest = tmp_path / "out"

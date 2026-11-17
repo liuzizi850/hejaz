@@ -1728,6 +1728,13 @@ class BaseBrowserAgent:
             if _task_was_done:
                 raise KeyboardInterrupt("Done")
 
+            if planned_tasks and all(
+                str(task.get('status', 'pending')).strip().lower() not in active_task_statuses
+                for task in planned_tasks
+            ):
+                logger.info("所有子任务已结束，停止继续执行")
+                raise KeyboardInterrupt("Done")
+
             history = getattr(agent_instance, 'history', [])
             if hasattr(history, 'history'): history = history.history
 

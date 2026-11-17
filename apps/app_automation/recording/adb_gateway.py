@@ -286,23 +286,62 @@ def copy_case_start_screen(source, case_id):
     return dest
 
 
+def media_search_roots():
+    """当前服务的 media，以及 worktree 对应主仓库的 media。"""
+    import os
+    from pathlib import Path
+    from django.conf import settings
+
+    roots = []
+
+    def add(path):
+        if not path:
+            return
+        absolute = os.path.abspath(path)
+        if absolute not in roots and os.path.isdir(absolute):
+            roots.append(absolute)
+
+    add(getattr(settings, "MEDIA_ROOT", ""))
+    base = Path(getattr(settings, "BASE_DIR", "")).resolve()
+    if base.parent.name == ".worktrees":
+        add(base.parent.parent / "media")
+    return roots
+
+
 def to_media_url(path):
     import os
     from django.conf import settings
     if not path:
         return ""
-    root = os.path.abspath(settings.MEDIA_ROOT)
     target = os.path.abspath(path)
-    try:
-        rel = os.path.relpath(target, root)
-    except ValueError:
-        return ""
-    if rel.startswith(".."):
-        return ""
     prefix = settings.MEDIA_URL or "/media/"
     if not prefix.endswith("/"):
         prefix += "/"
-    return prefix + rel.replace("\\", "/")
+    for root in media_search_roots():
+        try:
+            rel = os.path.relpath(target, root)
+        except ValueError:
+            continue
+        if rel.startswith(".."):
+            continue
+        return prefix + rel.replace("\\", "/")
+    return ""
+
+
+def resolve_media_file(relative_path):
+    """在已知 media 目录里找文件，拒绝跳出目录。"""
+    import os
+    relative = (relative_path or "").replace("\\", "/").lstrip("/")
+    if not relative or any(part in ("", "..") for part in relative.split("/")):
+        return ""
+    for root in media_search_roots():
+        full = os.path.abspath(os.path.join(root, *relative.split("/")))
+        root_abs = os.path.abspath(root)
+        if not full.startswith(root_abs + os.sep):
+            continue
+        if os.path.isfile(full):
+            return full
+    return ""
 
 
 def hierarchy_xml(command_output, xml):

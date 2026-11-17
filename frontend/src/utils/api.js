@@ -33,15 +33,17 @@ api.interceptors.request.use(
   async (config) => {
     const userStore = useUserStore()
 
-    // 检查是否是刷新token的请求
+    // 刷新请求不走访问令牌，也不能进入下面的等待队列。
     if (config.url === '/auth/token/refresh/') {
       return config
     }
 
     // 如果有access token
     if (userStore.accessToken) {
+      // 退出必须直接发出。刷新失败时会调用退出，若退出再排进这次刷新的队列，列表请求会永远等不到结果。
+      const isLogout = config.url === '/auth/logout/'
       // 检查token是否即将过期（5分钟内）
-      if (userStore.isTokenExpiringSoon && !userStore.isTokenExpired) {
+      if (!isLogout && userStore.isTokenExpiringSoon && !userStore.isTokenExpired) {
         // 如果没有正在刷新，开始刷新
         if (!isRefreshing) {
           isRefreshing = true
@@ -63,10 +65,22 @@ api.interceptors.request.use(
             isRefreshing = false
           }
         } else {
-          // 如果正在刷新，将请求加入队列
+          // 如果正在刷新，将请求加入队列。刷新方若没有回调，不能一直占着加载状态。
           console.log('Token正在刷新，请求加入队列等待...')
           return new Promise((resolve, reject) => {
-            failedQueue.push({ resolve, reject })
+            const timer = setTimeout(() => {
+              reject(new Error('等待刷新登录状态超时'))
+            }, 30000)
+            failedQueue.push({
+              resolve: (token) => {
+                clearTimeout(timer)
+                resolve(token)
+              },
+              reject: (err) => {
+                clearTimeout(timer)
+                reject(err)
+              },
+            })
           }).then(token => {
             config.headers.Authorization = `Bearer ${token}`
             return config

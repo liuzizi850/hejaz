@@ -249,7 +249,8 @@ def test_bad_zip_message_has_no_traceback():
     execute_scan(task.id, token="super-secret-token")
     task.refresh_from_db()
     assert task.status == ScanTask.STATUS_FAILED
-    assert task.error_message == "取代码失败: zip 打不开"
+    assert task.error_message.startswith("取代码失败: zip 打不开")
+    assert "File is not a zip file" in task.error_message
     assert "Traceback" not in task.error_message
     assert "super-secret-token" not in task.error_message
     assert not task.result_file
